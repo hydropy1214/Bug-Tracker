@@ -16,6 +16,7 @@ import {
   projectsTable,
 } from "@workspace/db";
 import { discoverToolCapabilities, resolveScanPolicy, scanTarget, type ScanType } from "./scanner";
+import { decryptAuthHeaders } from "./auth-context";
 import { logger } from "./logger";
 
 const TICK_MS = 3_000; // how often we check for new pending scans
@@ -145,6 +146,17 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
   for (const asset of assets) {
     await log(`[${new Date().toISOString()}] Scanning asset: ${asset.value} (${asset.type})`);
 
+    // Decrypt auth headers if the scan has an auth context stored
+    let authHeaders: Record<string, string> | undefined;
+    if (scan.authContext) {
+      try {
+        authHeaders = decryptAuthHeaders(scan.authContext);
+        await log(`[${new Date().toISOString()}] Authenticated scanning: decrypted auth context (${Object.keys(authHeaders).length} header(s))`);
+      } catch {
+        await log(`[${new Date().toISOString()}] Warning: failed to decrypt authContext — scanning unauthenticated`);
+      }
+    }
+
     // Wire the scanner's log output into the scan's log stream
     const assetFindings = await scanTarget(
       asset.value,
@@ -158,6 +170,7 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
         await setProgress(scan.id, subProgress);
       },
       policy,
+      authHeaders,
     );
 
     // Insert real findings (deduplicate by title across assets)

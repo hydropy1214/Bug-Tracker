@@ -1,0 +1,139 @@
+I need you to upgrade the SentinelX scanner to a professional, enterprise-grade level.
+You will modify files in `artifacts/api-server/src/lib/` (mostly `scanner.ts` and `vuln-probes.ts`) and, if needed, add new phases. Follow these instructions precisely and keep the existing 21‑phase structure intact.
+
+---
+
+## 1. FIX SSTI FALSE POSITIVES (CRITICAL)
+
+The current SSTI check in `vuln-probes.ts` → `checkSSTI()` only looks for `49` anywhere in the response body. That produces false positives on dynamic pages (e.g., Cloudflare Ray IDs). Replace that logic with:
+
+a) **Reflection gate**: Before even searching for the result, confirm the *raw payload* (e.g., `{{7*7}}` or `{{'SENTINELX_SSTI_' + 'CONFIRM'}}`) actually appears in the response body. If it’s not reflected, do NOT flag SSTI for that parameter.
+
+b) **Proximity matching**: If the payload is reflected, find its position(s) in the body. Then look for the expected result (`49`) within a window of 200 characters around each reflection. Only count matches near the reflection.
+
+c) **Unique canary**: As the primary verification, send `{{'SENTINELX_SSTI_' + 'CONFIRM'}}` (URL‑encoded). If the exact string `SENTINELX_SSTI_CONFIRM` appears in the response body AND was absent from the baseline, mark the finding as **VERIFIED** with high confidence. If this canary fails, downgrade the finding or suppress it entirely.
+
+d) **Multi‑expression confirmation**: After the first math probe, immediately send a second request with `{{8*8}}`. If the response contains `64` (and `49` disappears or reduces), increase confidence. Only report SSTI if *both* math probes pass *and* the payload is reflected, **or** the canary succeeds.
+
+e) **Dynamic‑content filter**: Before any string matching, strip out known ephemeral tokens from the response body:
+   - Cloudflare Ray IDs (regex: `[a-f0-9]{16,}-[A-Z]{3}`)
+   - `__cf_bm` cookie values
+   - Challenge nonces, timestamps like `2026-07-23T16:34:12.865Z`
+
+Update the finding’s `evidence` field to show which checks passed and include a snippet of the reflected payload with the result.
+
+---
+
+## 2. HARDEN SQL INJECTION DETECTION
+
+The scanner already has error‑based and time‑based blind SQLi in `scanner.ts`. Improve both:
+
+### Error‑based
+- Expand the payload set to cover **MSSQL, Oracle, PostgreSQL, and MySQL** specific error patterns (list at least 12 distinct error signatures, e.g., `SQLSTATE`, `ORA-`, `Microsoft OLE DB`, `psql:`, `Warning: mysql_`).
+- Inject into **JSON bodies, cookie values, and custom headers** as well as query parameters.
+
+### Time‑based blind
+- Add **configurable sleep time** via the scan policy (default 5 seconds).
+- Use a **baseline timing** (send a benign request first, measure the round‑trip; then inject ` AND SLEEP(5)--` etc.). Flag only if the response time exceeds baseline by at least 4 seconds.
+- Include payloads for **MySQL, PostgreSQL, MSSQL, Oracle, and SQLite**.
+- After a time‑based hit, automatically run a second distinct payload (`SLEEP(3)`) to confirm the delay is repeatable.
+
+### Boolean‑based blind (add if missing)
+- Send **true** (` AND 1=1--`) and **false** (` AND 1=2--`) versions and compare response length/status. Flag if they differ significantly (e.g., >20% length change or different status code). Report as "Blind SQL Injection (Boolean)" with CVSS 7.5.
+
+---
+
+## 3. EXPAND JWT ATTACK SURFACE (Phase 17)
+
+The current JWT phase only checks `alg:none`, weak secrets, and missing `exp`. Expand it to a full **JWT Attack Suite**:
+
+- **Key Confusion (RS256 → HS256)**: If the token uses RS256, try signing with the server’s own public key (from `.well-known/jwks.json` if available) using HMAC. If accepted, CRITICAL.
+- **JWK/JKU Injection**: Replace `jwk`/`jku` headers with attacker‑controlled keys. Verify acceptance.
+- **Empty Signature / Signature Stripping**: Send the token with signature removed (ends with a dot) or set to `null`. Flag if server accepts.
+- **Embedded JWK**: Insert an inline JWK in the header and re‑sign; test if server trusts the embedded key.
+- **Weak HMAC‑Secret Brute‑force**: Expand the dictionary to 25 common secrets (include `secret`, `password`, `jwt`, `token`, `changeme`, etc.). Flag with the exact secret if found.
+- **Expired Token Acceptance**: If the token is expired but still accepted, flag MEDIUM.
+
+Add a new internal function `checkJwtAdvanced()` in `scanner.ts` and call it from the JWT phase. Only run if a JWT is found in cookies or `Authorization` header.
+
+---
+
+## 4. ADD IDOR / BROKEN OBJECT‑LEVEL AUTHORIZATION DETECTION (NEW PHASE)
+
+Insert a new **Phase 18** (shift later phases) called **"Access Control / IDOR"** that runs after advanced probes. It should:
+
+- Extract all numeric IDs from JSON/HTML response bodies of previously fetched pages (user IDs, order IDs, document IDs, etc.).
+- For each ID, increment by 1 and replay the same request (with same cookies/headers). If the response returns a 2xx status with substantially different content (length change >20%), flag as **Potential IDOR** with MEDIUM severity.
+- Also test **role‑escalation headers**: add `X-Admin: true`, `X-Role: admin`, `Role: admin` to requests and observe if the response changes from forbidden to successful.
+
+This phase respects the scan budget and concurrency policy.
+
+---
+
+## 5. ADD HTTP REQUEST SMUGGLING DETECTION (NEW PHASE)
+
+Create **Phase 19: HTTP Request Smuggling** that tests for CL.TE and TE.CL desynchronization:
+
+- Send ambiguous requests using both `Transfer-Encoding: chunked` and `Content-Length` headers.
+- Measure response times and status codes. If the server processes the request incorrectly (e.g., 400/500 errors, or a timing difference >2 seconds from baseline), flag as "Potential HTTP Request Smuggling" (CRITICAL).
+- Use a small set of payloads (3 variants) to avoid overwhelming the server.
+
+Because this requires low‑level HTTP, use Node.js `http` module directly, not the existing `probe()` wrapper. Handle errors gracefully.
+
+---
+
+## 6. STRENGTHEN CORS MISCONFIGURATION DETECTION
+
+The header phase already checks `Access-Control-Allow-Origin`. Add an active test:
+
+- For each endpoint, send a request with `Origin: https://attacker.com`.
+- If the response reflects the origin **exactly** (`Access-Control-Allow-Origin: https://attacker.com`) **and** includes `Access-Control-Allow-Credentials: true`, flag as HIGH (Credentialed CORS Misconfiguration).
+- Also flag if `Access-Control-Allow-Origin: *` is set with credentials.
+
+---
+
+## 7. ENABLE AUTHENTICATED SCANNING (USE EXISTING AUTH CONTEXT)
+
+The `auth-context.ts` module is already wired to encrypt/decrypt auth headers. Now make the scanner actually **pass the stored credentials** during all HTTP probes.
+
+- In `scanner.ts` → `probe()` and `fetch()` calls, check the `authContext` from the scan policy.
+- If present, attach the decrypted token (`Authorization: Bearer ...`) and cookies to every outbound request.
+- This allows the scanner to crawl behind login forms, dramatically increasing coverage.
+
+Add a log line: "Authenticated scanning enabled — injecting stored credentials" when used.
+
+---
+
+## 8. IMPROVE REPORTING & COMPLIANCE MAPPING
+
+At the end of `scanTarget()`, when building the final scan report:
+
+- Compute an **executive summary**: total findings, breakdown by severity, top‑3 most dangerous findings, overall risk grade.
+- Map each finding to **OWASP Top 10 (2021), PCI DSS v4.0, and NIST 800-53** controls. Add a `compliance` array to the `RealFinding` interface (e.g., `{ owasp: ["A03"], pci: ["6.5.1"], nist: ["SC-23"] }`). Populate these for all existing findings based on their type.
+- In the report JSON (`/api/scans/:id/report`), include the executive summary and the compliance tags.
+
+---
+
+## 9. MISCELLANEOUS ENHANCEMENTS
+
+- In the **technology fingerprinting** phase, add detection for **Kubernetes** (look for `"kind": "Status"`), **Docker API** (version header), **AWS Lambda** (`x-amz-function-arn`), and **Apache Struts** (`.action` suffix).
+- In the **sensitive paths** phase, add patterns for **Kubernetes** secrets (`/var/run/secrets/kubernetes.io/`, `/etc/kubernetes/`).
+- In the **API surface** phase, add a check for **WADL** (`/application.wadl`).
+- Add a quick test for **GraphQL query depth** (send a deeply nested query and see if it’s blocked – flag if allowed without limits).
+- In the **path traversal** phase, confirm file reads by checking for `/etc/hostname` on Linux and `C:\windows\win.ini` on Windows with a unique canary string in a temporary file? Not necessary – keep the existing `/etc/passwd` pattern but also test for `boot.ini` as a Windows indicator.
+
+---
+
+## 10. SELF‑TEST AND LOGGING
+
+After implementing everything:
+
+- Ensure the scan pipeline still runs from the Dashboard without crashing.
+- Add console log lines at the start and end of each new phase so the user can see them in the live terminal.
+- Update the `ScanPolicy` for `deep_authorized` to increase the budget to 8000 requests to accommodate the new phases.
+- Verify that the existing tests (quick‑scan, full scan) still produce findings where expected.
+
+---
+
+Make all changes in a single commit if possible. Do not break existing functionality.
+Focus on production‑ready code with proper error handling and typing.
