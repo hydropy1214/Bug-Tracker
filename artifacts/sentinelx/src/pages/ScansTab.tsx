@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Play, Terminal, Clock, RefreshCw, Radar, Zap, Globe, ShieldCheck, ChevronDown, AlertTriangle } from "lucide-react";
+import { Play, Terminal, Clock, RefreshCw, Radar, Zap, Globe, ShieldCheck, ChevronDown, AlertTriangle, Download, GitCompare } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate, cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
@@ -23,6 +23,14 @@ const SCAN_TYPES = [
   { value: "enumeration",   label: "Enumeration",     desc: "Ports (nmap), subdomains (crt.sh), sensitive paths, Wayback", icon: Radar,  eta: "~2-3 min" },
   { value: "vulnerability", label: "Vulnerability",   desc: "All above + SQLi, XSS, open redirect, API surface",     icon: ShieldCheck, eta: "~3-4 min" },
   { value: "full",          label: "Full Scan",       desc: "All 12 modules — deepest coverage, all real tools",      icon: Zap,         eta: "~5-6 min" },
+];
+
+const SCAN_PROFILES = [
+  { value: "passive", label: "Passive", desc: "DNS, TLS, headers, fingerprinting only", budget: "80 requests" },
+  { value: "safe_active", label: "Safe Active", desc: "Bounded active checks; no deep probes", budget: "300 requests" },
+  { value: "deep_authorized", label: "Deep Authorized", desc: "Expanded probes for authorized targets", budget: "1,200 requests" },
+  { value: "authenticated", label: "Authenticated", desc: "Reserved for supplied test sessions", budget: "1,500 requests" },
+  { value: "lab", label: "Lab", desc: "Deep checks for controlled fixtures", budget: "2,000 requests" },
 ];
 
 const TYPE_STYLES: Record<string, { color: string; bg: string; border: string }> = {
@@ -77,6 +85,7 @@ export function ScansTab({ projectId, assetCount = 0 }: { projectId: number; ass
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   // Track which scan is expanded for live log streaming
   const [expandedScanId, setExpandedScanId] = useState<number | null>(null);
+  const [baselineScanId, setBaselineScanId] = useState<number | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const createScan = useCreateScan();
 
@@ -118,6 +127,7 @@ export function ScansTab({ projectId, assetCount = 0 }: { projectId: number; ass
         data: {
           name: f.get("name") as string,
           type: (f.get("type") as any) || "recon",
+          profile: (f.get("profile") as any) || "safe_active",
         },
       },
       {
@@ -131,6 +141,45 @@ export function ScansTab({ projectId, assetCount = 0 }: { projectId: number; ass
         onError: () => toast.error("Failed to initiate scan"),
       },
     );
+  };
+
+  const downloadReport = async (scanId: number, format: "json" | "sarif") => {
+    try {
+      const response = await fetch(`/api/scans/${scanId}/report?format=${format}`);
+      if (!response.ok) throw new Error("Report unavailable");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `sentinelx-scan-${scanId}.${format === "sarif" ? "sarif" : "json"}`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      toast.success(`${format.toUpperCase()} report downloaded`);
+    } catch {
+      toast.error("Could not download report");
+    }
+  };
+
+  const compareScan = async (currentId: number) => {
+    if (!baselineScanId || baselineScanId === currentId) {
+      toast.error("Select a different completed scan as the baseline first");
+      return;
+    }
+    try {
+      const response = await fetch(`/api/scans/${currentId}/diff/${baselineScanId}`);
+      if (!response.ok) throw new Error("Diff unavailable");
+      const diff = await response.json();
+      const blob = new Blob([JSON.stringify(diff, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `sentinelx-diff-${baselineScanId}-to-${currentId}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Diff: ${diff.summary.introduced} introduced · ${diff.summary.resolved} resolved`);
+    } catch {
+      toast.error("Could not generate scan diff");
+    }
   };
 
   const progressColor = (pct: number) =>
@@ -184,6 +233,28 @@ export function ScansTab({ projectId, assetCount = 0 }: { projectId: number; ass
                   placeholder="e.g. Daily Recon — example.com"
                   className="font-mono text-sm bg-background border-border rounded-sm"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Assessment Profile</Label>
+                <Select name="profile" defaultValue="safe_active">
+                  <SelectTrigger className="font-mono text-sm bg-background border-border rounded-sm h-auto py-2">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SCAN_PROFILES.map((profile) => (
+                      <SelectItem key={profile.value} value={profile.value}>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-xs uppercase">{profile.label}</span>
+                            <span className="text-[9px] font-mono text-muted-foreground border border-border px-1 rounded-sm">{profile.budget}</span>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground font-sans">{profile.desc}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Module Type</Label>
@@ -278,6 +349,9 @@ export function ScansTab({ projectId, assetCount = 0 }: { projectId: number; ass
                       <span className="font-mono text-sm font-bold text-foreground truncate">{scan.name}</span>
                       <TypeBadge type={scan.type || "recon"} />
                       <StatusBadge status={scan.status} />
+                      <span className="text-[9px] font-mono uppercase tracking-widest text-cyan-400 border border-cyan-500/20 bg-cyan-500/5 px-1.5 py-0.5 rounded-sm">
+                        {scan.profile?.replace("_", " ") ?? "safe active"}
+                      </span>
                       {(scan.findingsCount ?? 0) > 0 && (
                         <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-sm bg-orange-500/10 text-orange-400 border border-orange-500/20 uppercase tracking-widest">
                           {scan.findingsCount} finding{scan.findingsCount !== 1 ? "s" : ""}
@@ -329,11 +403,38 @@ export function ScansTab({ projectId, assetCount = 0 }: { projectId: number; ass
                           </span>
                         )}
                         {!active && scan.status === "completed" && (
-                          <span className="text-[9px] font-mono uppercase tracking-widest text-emerald-400 flex items-center gap-1.5">
-                            ✓ Scan complete · {scan.findingsCount} finding{scan.findingsCount !== 1 ? "s" : ""}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] font-mono uppercase tracking-widest text-emerald-400 flex items-center gap-1.5">
+                              ✓ Scan complete · {scan.findingsCount} finding{scan.findingsCount !== 1 ? "s" : ""}
+                            </span>
+                            <Button variant="ghost" size="sm" className="h-6 px-2 text-[9px] font-mono uppercase gap-1" onClick={(event) => { event.stopPropagation(); void downloadReport(scan.id, "json"); }}>
+                              <Download className="w-3 h-3" /> JSON
+                            </Button>
+                            <Button variant="ghost" size="sm" className="h-6 px-2 text-[9px] font-mono uppercase gap-1" onClick={(event) => { event.stopPropagation(); void downloadReport(scan.id, "sarif"); }}>
+                              <Download className="w-3 h-3" /> SARIF
+                            </Button>
+                          </div>
                         )}
                       </div>
+                      {!active && scan.status === "completed" && (
+                        <div className="px-4 pb-3 flex items-center gap-2 border-t border-border/20 pt-2">
+                          <label className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground">Baseline</label>
+                          <select
+                            value={baselineScanId ?? ""}
+                            onChange={(event) => setBaselineScanId(event.target.value ? Number(event.target.value) : null)}
+                            onClick={(event) => event.stopPropagation()}
+                            className="h-6 rounded-sm border border-border bg-background px-2 text-[10px] font-mono text-foreground"
+                          >
+                            <option value="">Select scan</option>
+                            {(scans ?? []).filter((candidate) => candidate.status === "completed" && candidate.id !== scan.id).map((candidate) => (
+                              <option key={candidate.id} value={candidate.id}>#{candidate.id} {candidate.name}</option>
+                            ))}
+                          </select>
+                          <Button variant="ghost" size="sm" className="h-6 px-2 text-[9px] font-mono uppercase gap-1" onClick={(event) => { event.stopPropagation(); void compareScan(scan.id); }}>
+                            <GitCompare className="w-3 h-3" /> Diff
+                          </Button>
+                        </div>
+                      )}
 
                       {/* Log body */}
                       <div className="p-4 max-h-96 overflow-y-auto" style={{ fontFamily: "monospace" }}>

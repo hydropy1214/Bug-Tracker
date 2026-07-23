@@ -18,11 +18,13 @@
 import * as tls from "node:tls";
 import * as net from "node:net";
 import * as dns from "node:dns";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const dnsResolve = dns.promises;
+const scanContext = new AsyncLocalStorage<{ remaining: number; exhaustedNotified: boolean }>();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -33,6 +35,14 @@ export interface RealFinding {
   severity: "critical" | "high" | "medium" | "low";
   verification?: "verified" | "version_match" | "suspected" | "informational";
   confidence?: number;
+  evidenceQuality?: "weak" | "standard" | "strong";
+  verificationMethod?: string;
+  reproducibility?: "reproducible" | "intermittent" | "not_reproducible" | "not_tested";
+  affectedEndpoint?: string;
+  affectedParameter?: string;
+  negativeTests?: string;
+  limitations?: string;
+  toolInfo?: string;
   description: string;
   cvss: number;
   cve: string | null;
@@ -59,6 +69,121 @@ interface ProbeResult {
 
 export type ScanType = "recon" | "enumeration" | "vulnerability" | "full";
 export type LogFn = (msg: string) => Promise<void> | void;
+export type ScanProfile = "passive" | "safe_active" | "deep_authorized" | "authenticated" | "lab";
+
+export interface ScanPolicy {
+  profile: ScanProfile;
+  requestBudget: number;
+  timeoutMs: number;
+  maxConcurrency: number;
+  allowDeepChecks: boolean;
+  allowExternalCallbacks: boolean;
+  allowToolAdapters: boolean;
+}
+
+export const SCAN_POLICIES: Record<ScanProfile, Omit<ScanPolicy, "profile">> = {
+  passive: {
+    requestBudget: 80,
+    timeoutMs: 8_000,
+    maxConcurrency: 2,
+    allowDeepChecks: false,
+    allowExternalCallbacks: false,
+    allowToolAdapters: false,
+  },
+  safe_active: {
+    requestBudget: 300,
+    timeoutMs: 10_000,
+    maxConcurrency: 4,
+    allowDeepChecks: false,
+    allowExternalCallbacks: false,
+    allowToolAdapters: false,
+  },
+  deep_authorized: {
+    requestBudget: 1_200,
+    timeoutMs: 15_000,
+    maxConcurrency: 6,
+    allowDeepChecks: true,
+    allowExternalCallbacks: false,
+    allowToolAdapters: true,
+  },
+  authenticated: {
+    requestBudget: 1_500,
+    timeoutMs: 15_000,
+    maxConcurrency: 6,
+    allowDeepChecks: true,
+    allowExternalCallbacks: false,
+    allowToolAdapters: true,
+  },
+  lab: {
+    requestBudget: 2_000,
+    timeoutMs: 15_000,
+    maxConcurrency: 8,
+    allowDeepChecks: true,
+    allowExternalCallbacks: true,
+    allowToolAdapters: true,
+  },
+};
+
+export function resolveScanPolicy(profile: string | undefined): ScanPolicy {
+  const selected = (profile && profile in SCAN_POLICIES ? profile : "safe_active") as ScanProfile;
+  return { profile: selected, ...SCAN_POLICIES[selected] };
+}
+
+export interface ToolCapability {
+  name: string;
+  available: boolean;
+  version?: string;
+  path?: string;
+  reason?: string;
+}
+
+const TOOL_COMMANDS: Record<string, string> = {
+  nmap: "nmap",
+  dig: "dig",
+  whois: "whois",
+  openssl: "openssl",
+  curl: "curl",
+  httpx: "httpx",
+  nuclei: "nuclei",
+  ffuf: "ffuf",
+  sqlmap: "sqlmap",
+};
+
+export async function discoverToolCapabilities(): Promise<ToolCapability[]> {
+  const capabilities: ToolCapability[] = [];
+  for (const [name, command] of Object.entries(TOOL_COMMANDS)) {
+    try {
+      const { stdout: path } = await execFileAsync("sh", ["-lc", `command -v ${command}`], { timeout: 2_000 });
+      let version = "";
+      try {
+        const { stdout, stderr } = await execFileAsync(command, ["--version"], { timeout: 3_000 });
+        version = `${stdout || stderr}`.split("\n")[0]?.trim() ?? "";
+      } catch {
+        version = "installed; version unavailable";
+      }
+      capabilities.push({ name, available: true, path: path.trim(), version });
+    } catch {
+      capabilities.push({ name, available: false, reason: "not installed in this environment" });
+    }
+  }
+  return capabilities;
+}
+
+/** Reserve one target request from the active scan's explicit budget. */
+export function reserveScanRequest(): boolean {
+  const context = scanContext.getStore();
+  if (!context) return true;
+  if (context.remaining <= 0) {
+    context.exhaustedNotified = true;
+    return false;
+  }
+  context.remaining -= 1;
+  return true;
+}
+
+export function remainingScanRequests(): number | null {
+  return scanContext.getStore()?.remaining ?? null;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CORE HELPERS
@@ -96,6 +221,7 @@ async function probe(
     followRedirects?: boolean;
   } = {},
 ): Promise<ProbeResult | null> {
+  if (!reserveScanRequest()) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 12_000);
   const t0 = Date.now();
@@ -1663,6 +1789,7 @@ export async function scanTarget(
   assetType: string,
   scanType: ScanType,
   onLog: LogFn,
+  policy: ScanPolicy = resolveScanPolicy("safe_active"),
 ): Promise<RealFinding[]> {
   const target = normalizeTarget(value, assetType);
   if (!target) {
@@ -1670,13 +1797,17 @@ export async function scanTarget(
     return [];
   }
 
-  const all: RealFinding[] = [];
-  const add = (f: RealFinding[]) => { all.push(...f); };
+  return scanContext.run(
+    { remaining: policy.requestBudget, exhaustedNotified: false },
+    async () => {
+      const all: RealFinding[] = [];
+      const add = (f: RealFinding[]) => { all.push(...f); };
 
   await onLog(`[${ts()}] ═══════════════════════════════════════`);
   await onLog(`[${ts()}] TARGET  : ${target.url}`);
   await onLog(`[${ts()}] HOST    : ${target.hostname}`);
-  await onLog(`[${ts()}] SCAN    : ${scanType.toUpperCase()}`);
+  await onLog(`[${ts()}] SCAN    : ${scanType.toUpperCase()} / PROFILE ${policy.profile.toUpperCase()}`);
+  await onLog(`[${ts()}] POLICY  : ${policy.requestBudget} request budget · ${policy.timeoutMs}ms timeout · ${policy.maxConcurrency} concurrency`);
   await onLog(`[${ts()}] TOOLS   : nmap · dig · whois · openssl · fetch`);
   await onLog(`[${ts()}] ═══════════════════════════════════════`);
 
@@ -1740,7 +1871,7 @@ export async function scanTarget(
   }
 
   // ── Phase 11: Web app vulnerability probes (vulnerability, full) ──────────
-  if (["vulnerability", "full"].includes(scanType)) {
+  if (["vulnerability", "full"].includes(scanType) && policy.allowDeepChecks) {
     await onLog(`[${ts()}] [Phase 11] Web application vulnerability probes...`);
     add(await checkWebApp(target, onLog));
   }
@@ -1765,7 +1896,7 @@ export async function scanTarget(
     add(sstiF); add(xxeF); add(ssrfF); add(deserF);
 
     // CVE lookup for detected technologies (full scan only — NVD rate limits)
-    if (scanType === "full") {
+    if (scanType === "full" && policy.allowDeepChecks) {
       await onLog(`[${ts()}] [Phase 14] CVE database lookup for detected technologies...`);
       const { techs: detectedTechs } = await fingerprint(target, async () => {});
       add(await lookupCvesForTechs(detectedTechs, onLog));
@@ -1780,11 +1911,14 @@ export async function scanTarget(
     if (f.severity in bySeverity) bySeverity[f.severity as keyof typeof bySeverity]++;
   }
 
-  await onLog(`[${ts()}] ═══════════════════════════════════════`);
-  await onLog(`[${ts()}] SCAN COMPLETE`);
-  await onLog(`[${ts()}] Total findings : ${reportable.length}`);
-  await onLog(`[${ts()}] Critical: ${bySeverity.critical}  High: ${bySeverity.high}  Medium: ${bySeverity.medium}  Low: ${bySeverity.low}`);
-  await onLog(`[${ts()}] ═══════════════════════════════════════`);
+      await onLog(`[${ts()}] ═══════════════════════════════════════`);
+      await onLog(`[${ts()}] SCAN COMPLETE`);
+      await onLog(`[${ts()}] Total findings : ${reportable.length}`);
+      await onLog(`[${ts()}] Requests remaining: ${remainingScanRequests() ?? "unbounded"}/${policy.requestBudget}`);
+      await onLog(`[${ts()}] Critical: ${bySeverity.critical}  High: ${bySeverity.high}  Medium: ${bySeverity.medium}  Low: ${bySeverity.low}`);
+      await onLog(`[${ts()}] ═══════════════════════════════════════`);
 
-  return reportable;
+      return reportable;
+    },
+  );
 }

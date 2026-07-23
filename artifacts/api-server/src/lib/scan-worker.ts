@@ -15,7 +15,7 @@ import {
   assetsTable,
   projectsTable,
 } from "@workspace/db";
-import { scanTarget, type ScanType } from "./scanner";
+import { discoverToolCapabilities, resolveScanPolicy, scanTarget, type ScanType } from "./scanner";
 import { logger } from "./logger";
 
 const TICK_MS = 3_000; // how often we check for new pending scans
@@ -89,11 +89,21 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
   };
 
   logger.info({ scanId: scan.id, type: scan.type }, "Scan started");
+  const policy = resolveScanPolicy(scan.profile);
+  const capabilities = await discoverToolCapabilities();
+  const capabilityJson = JSON.stringify(capabilities);
 
   // Mark running
   await db
     .update(scansTable)
-    .set({ status: "running", progress: 0, startedAt: new Date(), logs: "" })
+    .set({
+      status: "running",
+      progress: 0,
+      startedAt: new Date(),
+      logs: "",
+      policy: JSON.stringify(policy),
+      toolCapabilities: capabilityJson,
+    })
     .where(eq(scansTable.id, scan.id));
 
   // Load assets for this project
@@ -113,7 +123,10 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
     if (label) await log(`[${new Date().toISOString()}] ${label}`);
   };
 
-  await log(`[${new Date().toISOString()}] Scan initialised — type: ${scan.type}, assets: ${assets.length}`);
+  await log(`[${new Date().toISOString()}] Scan initialised — type: ${scan.type}, profile: ${policy.profile}, assets: ${assets.length}`);
+  await log(`[${new Date().toISOString()}] Policy: ${policy.requestBudget} request budget · ${policy.timeoutMs}ms timeout · ${policy.maxConcurrency} concurrency`);
+  await log(`[${new Date().toISOString()}] Tools available: ${capabilities.filter((tool) => tool.available).map((tool) => `${tool.name}${tool.version ? ` (${tool.version})` : ""}`).join(", ") || "built-in HTTP only"}`);
+  await log(`[${new Date().toISOString()}] Tools unavailable: ${capabilities.filter((tool) => !tool.available).map((tool) => tool.name).join(", ") || "none"}`);
 
   if (assets.length === 0) {
     await log(`[${new Date().toISOString()}] No assets found for this project. Add assets (domains, IPs, API endpoints) to enable scanning.`);
@@ -144,6 +157,7 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
         const subProgress = Math.round(((phaseIdx + 0.5) / totalPhases) * 95);
         await setProgress(scan.id, subProgress);
       },
+      policy,
     );
 
     // Insert real findings (deduplicate by title across assets)
@@ -154,12 +168,21 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
 
       await db.insert(findingsTable).values({
         projectId: scan.projectId,
+        scanId: scan.id,
         assetId: asset.id,
         title: finding.title,
         description: finding.description,
         severity: finding.severity,
         verification: finding.verification ?? "verified",
         confidence: Math.max(0, Math.min(100, Math.round(finding.confidence ?? 80))),
+        evidenceQuality: finding.evidenceQuality ?? "standard",
+        verificationMethod: finding.verificationMethod ?? null,
+        reproducibility: finding.reproducibility ?? "not_tested",
+        affectedEndpoint: finding.affectedEndpoint ?? null,
+        affectedParameter: finding.affectedParameter ?? null,
+        negativeTests: finding.negativeTests ?? null,
+        limitations: finding.limitations ?? null,
+        toolInfo: finding.toolInfo ?? capabilityJson,
         status: "open",
         cvss: finding.cvss,
         cve: finding.cve ?? null,

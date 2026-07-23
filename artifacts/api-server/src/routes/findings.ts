@@ -48,12 +48,21 @@ router.post("/projects/:projectId/findings", async (req, res): Promise<void> => 
     .insert(findingsTable)
     .values({
       projectId: params.data.projectId,
+      scanId: parsed.data.scanId ?? null,
       title: parsed.data.title,
       description: parsed.data.description,
       severity: parsed.data.severity,
       status: parsed.data.status ?? "open",
       verification: parsed.data.verification ?? "verified",
       confidence: parsed.data.confidence ?? 80,
+      evidenceQuality: parsed.data.evidenceQuality ?? "standard",
+      verificationMethod: parsed.data.verificationMethod ?? null,
+      reproducibility: parsed.data.reproducibility ?? "not_tested",
+      affectedEndpoint: parsed.data.affectedEndpoint ?? null,
+      affectedParameter: parsed.data.affectedParameter ?? null,
+      negativeTests: parsed.data.negativeTests ?? null,
+      limitations: parsed.data.limitations ?? null,
+      toolInfo: parsed.data.toolInfo ?? null,
       assetId: parsed.data.assetId ?? null,
       cvss: parsed.data.cvss ?? null,
       cve: parsed.data.cve ?? null,
@@ -134,6 +143,15 @@ router.patch("/findings/:id", async (req, res): Promise<void> => {
     status?: string;
     verification?: string;
     confidence?: number;
+    scanId?: number | null;
+    evidenceQuality?: string;
+    verificationMethod?: string;
+    reproducibility?: string;
+    affectedEndpoint?: string;
+    affectedParameter?: string;
+    negativeTests?: string;
+    limitations?: string;
+    toolInfo?: string;
     cvss?: number;
     cve?: string;
     evidence?: string;
@@ -147,6 +165,15 @@ router.patch("/findings/:id", async (req, res): Promise<void> => {
   if (parsed.data.status !== undefined) updateData.status = parsed.data.status;
   if (parsed.data.verification !== undefined) updateData.verification = parsed.data.verification;
   if (parsed.data.confidence !== undefined) updateData.confidence = parsed.data.confidence;
+  if (parsed.data.scanId !== undefined) updateData.scanId = parsed.data.scanId;
+  if (parsed.data.evidenceQuality !== undefined) updateData.evidenceQuality = parsed.data.evidenceQuality;
+  if (parsed.data.verificationMethod !== undefined) updateData.verificationMethod = parsed.data.verificationMethod;
+  if (parsed.data.reproducibility !== undefined) updateData.reproducibility = parsed.data.reproducibility;
+  if (parsed.data.affectedEndpoint !== undefined) updateData.affectedEndpoint = parsed.data.affectedEndpoint;
+  if (parsed.data.affectedParameter !== undefined) updateData.affectedParameter = parsed.data.affectedParameter;
+  if (parsed.data.negativeTests !== undefined) updateData.negativeTests = parsed.data.negativeTests;
+  if (parsed.data.limitations !== undefined) updateData.limitations = parsed.data.limitations;
+  if (parsed.data.toolInfo !== undefined) updateData.toolInfo = parsed.data.toolInfo;
   if (parsed.data.cvss !== undefined) updateData.cvss = parsed.data.cvss;
   if (parsed.data.cve !== undefined) updateData.cve = parsed.data.cve;
   if (parsed.data.evidence !== undefined) updateData.evidence = parsed.data.evidence;

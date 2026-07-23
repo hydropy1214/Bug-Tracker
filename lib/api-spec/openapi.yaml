@@ -596,6 +596,8 @@ components:
           type: integer
         projectId:
           type: integer
+        scanId:
+          type: ["integer", "null"]
         assetId:
           type: ["integer", "null"]
         title:
@@ -615,6 +617,24 @@ components:
           type: integer
           minimum: 0
           maximum: 100
+        evidenceQuality:
+          type: string
+          enum: [weak, standard, strong]
+        verificationMethod:
+          type: string
+        reproducibility:
+          type: string
+          enum: [reproducible, intermittent, not_reproducible, not_tested]
+        affectedEndpoint:
+          type: string
+        affectedParameter:
+          type: string
+        negativeTests:
+          type: string
+        limitations:
+          type: string
+        toolInfo:
+          type: string
         cvss:
           type: ["number", "null"]
         cve:
@@ -655,7 +675,29 @@ components:
           minimum: 0
           maximum: 100
           default: 80
+        evidenceQuality:
+          type: string
+          enum: [weak, standard, strong]
+          default: standard
+        verificationMethod:
+          type: string
+        reproducibility:
+          type: string
+          enum: [reproducible, intermittent, not_reproducible, not_tested]
+          default: not_tested
+        affectedEndpoint:
+          type: string
+        affectedParameter:
+          type: string
+        negativeTests:
+          type: string
+        limitations:
+          type: string
+        toolInfo:
+          type: string
         assetId:
+          type: integer
+        scanId:
           type: integer
         cvss:
           type: number
@@ -686,6 +728,26 @@ components:
           type: integer
           minimum: 0
           maximum: 100
+        scanId:
+          type: integer
+        evidenceQuality:
+          type: string
+          enum: [weak, standard, strong]
+        verificationMethod:
+          type: string
+        reproducibility:
+          type: string
+          enum: [reproducible, intermittent, not_reproducible, not_tested]
+        affectedEndpoint:
+          type: string
+        affectedParameter:
+          type: string
+        negativeTests:
+          type: string
+        limitations:
+          type: string
+        toolInfo:
+          type: string
         cvss:
           type: number
         cve:
@@ -708,6 +770,13 @@ components:
         type:
           type: string
           enum: [recon, enumeration, vulnerability, full]
+        profile:
+          type: string
+          enum: [passive, safe_active, deep_authorized, authenticated, lab]
+        policy:
+          type: ["string", "null"]
+        toolCapabilities:
+          type: ["string", "null"]
         status:
           type: string
           enum: [pending, running, completed, failed]
@@ -739,6 +808,9 @@ components:
         type:
           type: string
           enum: [recon, enumeration, vulnerability, full]
+        profile:
+          type: string
+          enum: [passive, safe_active, deep_authorized, authenticated, lab]
 
     DashboardStats:
       type: object

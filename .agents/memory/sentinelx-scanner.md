@@ -45,3 +45,8 @@ description: Architecture of the scan engine, new endpoints, and advanced probe 
 **Why:** Security findings that overstate exploitability reduce trust and can cause incorrect remediation priorities.
 
 **How to apply:** New probes must provide differentiated evidence and explicitly state what was not tested. Do not assign a CVE, RCE claim, or confirmed severity from product names, open ports, headers, or generic error text alone.
+
+## Durable implementation constraints
+
+- Cross-scan comparison must use stable target identity and finding location, not transient project, asset, or finding IDs. Quick scans intentionally create new records for each run.
+- The repository's generated API validation uses Zod 3. OpenAPI response schemas must be concrete; empty `type: object` responses can generate Zod 4-only helpers and fail library typechecks.

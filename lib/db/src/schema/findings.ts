@@ -3,10 +3,12 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { projectsTable } from "./projects";
 import { assetsTable } from "./assets";
+import { scansTable } from "./scans";
 
 export const findingsTable = pgTable("findings", {
   id: serial("id").primaryKey(),
   projectId: integer("project_id").notNull().references(() => projectsTable.id, { onDelete: "cascade" }),
+  scanId: integer("scan_id").references(() => scansTable.id, { onDelete: "set null" }),
   assetId: integer("asset_id").references(() => assetsTable.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   description: text("description"),
@@ -14,6 +16,14 @@ export const findingsTable = pgTable("findings", {
   status: text("status").notNull().default("open"),
   verification: text("verification").notNull().default("verified"),
   confidence: integer("confidence").notNull().default(80),
+  evidenceQuality: text("evidence_quality").notNull().default("standard"),
+  verificationMethod: text("verification_method"),
+  reproducibility: text("reproducibility").notNull().default("not_tested"),
+  affectedEndpoint: text("affected_endpoint"),
+  affectedParameter: text("affected_parameter"),
+  negativeTests: text("negative_tests"),
+  limitations: text("limitations"),
+  toolInfo: text("tool_info"),
   cvss: real("cvss"),
   cve: text("cve"),
   evidence: text("evidence"),

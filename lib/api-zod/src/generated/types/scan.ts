@@ -5,6 +5,7 @@
  * SentinelX API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ScanProfile } from './scanProfile';
 import type { ScanStatus } from './scanStatus';
 import type { ScanType } from './scanType';
 
@@ -13,6 +14,11 @@ export interface Scan {
   projectId: number;
   name: string;
   type?: ScanType;
+  profile?: ScanProfile;
+  /** @nullable */
+  policy?: string | null;
+  /** @nullable */
+  toolCapabilities?: string | null;
   status: ScanStatus;
   /**
      * @minimum 0

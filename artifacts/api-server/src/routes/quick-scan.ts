@@ -8,11 +8,12 @@
 
 import { Router, type IRouter } from "express";
 import { db, projectsTable, assetsTable, scansTable, activityTable } from "@workspace/db";
+import { resolveScanPolicy, type ScanProfile } from "../lib/scanner";
 
 const router: IRouter = Router();
 
 router.post("/quick-scan", async (req, res): Promise<void> => {
-  const { url, scanType = "full" } = req.body as { url?: string; scanType?: string };
+  const { url, scanType = "full", profile = "safe_active" } = req.body as { url?: string; scanType?: string; profile?: string };
 
   if (!url || typeof url !== "string") {
     res.status(400).json({ error: "url is required" });
@@ -24,6 +25,12 @@ router.post("/quick-scan", async (req, res): Promise<void> => {
     res.status(400).json({ error: `scanType must be one of: ${VALID_SCAN_TYPES.join(", ")}` });
     return;
   }
+  const validProfiles = ["passive", "safe_active", "deep_authorized", "authenticated", "lab"];
+  if (!validProfiles.includes(profile)) {
+    res.status(400).json({ error: `profile must be one of: ${validProfiles.join(", ")}` });
+    return;
+  }
+  const policy = resolveScanPolicy(profile);
 
   // Normalise URL and determine asset type
   let normalised = url.trim();
@@ -48,7 +55,7 @@ router.post("/quick-scan", async (req, res): Promise<void> => {
     .insert(projectsTable)
     .values({
       name: hostname,
-      description: `Quick scan initiated for ${normalised}`,
+      description: `Quick scan initiated for ${normalised} using ${policy.profile} profile`,
       scope: normalised,
       status: "active",
     })
@@ -83,6 +90,8 @@ router.post("/quick-scan", async (req, res): Promise<void> => {
       projectId: project.id,
       name: scanName,
       type: scanType,
+      profile,
+      policy: JSON.stringify(policy),
       status: "pending",
       progress: 0,
       findingsCount: 0,
@@ -111,6 +120,8 @@ router.post("/quick-scan", async (req, res): Promise<void> => {
     target: normalised,
     hostname,
     scanType,
+    profile,
+    policy,
   });
 });
 

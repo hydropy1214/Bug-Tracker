@@ -5,6 +5,8 @@
  * SentinelX API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { FindingEvidenceQuality } from './findingEvidenceQuality';
+import type { FindingReproducibility } from './findingReproducibility';
 import type { FindingSeverity } from './findingSeverity';
 import type { FindingStatus } from './findingStatus';
 import type { FindingVerification } from './findingVerification';
@@ -12,6 +14,8 @@ import type { FindingVerification } from './findingVerification';
 export interface Finding {
   id: number;
   projectId: number;
+  /** @nullable */
+  scanId?: number | null;
   /** @nullable */
   assetId?: number | null;
   title: string;
@@ -25,6 +29,14 @@ export interface Finding {
      * @maximum 100
      */
   confidence?: number;
+  evidenceQuality?: FindingEvidenceQuality;
+  verificationMethod?: string;
+  reproducibility?: FindingReproducibility;
+  affectedEndpoint?: string;
+  affectedParameter?: string;
+  negativeTests?: string;
+  limitations?: string;
+  toolInfo?: string;
   /** @nullable */
   cvss?: number | null;
   /** @nullable */

@@ -5,10 +5,12 @@
  * SentinelX API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ScanInputProfile } from './scanInputProfile';
 import type { ScanInputType } from './scanInputType';
 
 export interface ScanInput {
   /** @minLength 1 */
   name: string;
   type: ScanInputType;
+  profile?: ScanInputProfile;
 }

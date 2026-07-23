@@ -182,9 +182,30 @@ export const FindingVerification = {
   informational: 'informational',
 } as const;
 
+export type FindingEvidenceQuality = typeof FindingEvidenceQuality[keyof typeof FindingEvidenceQuality];
+
+
+export const FindingEvidenceQuality = {
+  weak: 'weak',
+  standard: 'standard',
+  strong: 'strong',
+} as const;
+
+export type FindingReproducibility = typeof FindingReproducibility[keyof typeof FindingReproducibility];
+
+
+export const FindingReproducibility = {
+  reproducible: 'reproducible',
+  intermittent: 'intermittent',
+  not_reproducible: 'not_reproducible',
+  not_tested: 'not_tested',
+} as const;
+
 export interface Finding {
   id: number;
   projectId: number;
+  /** @nullable */
+  scanId?: number | null;
   /** @nullable */
   assetId?: number | null;
   title: string;
@@ -198,6 +219,14 @@ export interface Finding {
      * @maximum 100
      */
   confidence?: number;
+  evidenceQuality?: FindingEvidenceQuality;
+  verificationMethod?: string;
+  reproducibility?: FindingReproducibility;
+  affectedEndpoint?: string;
+  affectedParameter?: string;
+  negativeTests?: string;
+  limitations?: string;
+  toolInfo?: string;
   /** @nullable */
   cvss?: number | null;
   /** @nullable */
@@ -241,6 +270,25 @@ export const FindingInputVerification = {
   informational: 'informational',
 } as const;
 
+export type FindingInputEvidenceQuality = typeof FindingInputEvidenceQuality[keyof typeof FindingInputEvidenceQuality];
+
+
+export const FindingInputEvidenceQuality = {
+  weak: 'weak',
+  standard: 'standard',
+  strong: 'strong',
+} as const;
+
+export type FindingInputReproducibility = typeof FindingInputReproducibility[keyof typeof FindingInputReproducibility];
+
+
+export const FindingInputReproducibility = {
+  reproducible: 'reproducible',
+  intermittent: 'intermittent',
+  not_reproducible: 'not_reproducible',
+  not_tested: 'not_tested',
+} as const;
+
 export interface FindingInput {
   /** @minLength 1 */
   title: string;
@@ -253,7 +301,16 @@ export interface FindingInput {
      * @maximum 100
      */
   confidence?: number;
+  evidenceQuality?: FindingInputEvidenceQuality;
+  verificationMethod?: string;
+  reproducibility?: FindingInputReproducibility;
+  affectedEndpoint?: string;
+  affectedParameter?: string;
+  negativeTests?: string;
+  limitations?: string;
+  toolInfo?: string;
   assetId?: number;
+  scanId?: number;
   cvss?: number;
   cve?: string;
   evidence?: string;
@@ -291,6 +348,25 @@ export const FindingUpdateVerification = {
   informational: 'informational',
 } as const;
 
+export type FindingUpdateEvidenceQuality = typeof FindingUpdateEvidenceQuality[keyof typeof FindingUpdateEvidenceQuality];
+
+
+export const FindingUpdateEvidenceQuality = {
+  weak: 'weak',
+  standard: 'standard',
+  strong: 'strong',
+} as const;
+
+export type FindingUpdateReproducibility = typeof FindingUpdateReproducibility[keyof typeof FindingUpdateReproducibility];
+
+
+export const FindingUpdateReproducibility = {
+  reproducible: 'reproducible',
+  intermittent: 'intermittent',
+  not_reproducible: 'not_reproducible',
+  not_tested: 'not_tested',
+} as const;
+
 export interface FindingUpdate {
   title?: string;
   description?: string;
@@ -302,6 +378,15 @@ export interface FindingUpdate {
      * @maximum 100
      */
   confidence?: number;
+  scanId?: number;
+  evidenceQuality?: FindingUpdateEvidenceQuality;
+  verificationMethod?: string;
+  reproducibility?: FindingUpdateReproducibility;
+  affectedEndpoint?: string;
+  affectedParameter?: string;
+  negativeTests?: string;
+  limitations?: string;
+  toolInfo?: string;
   cvss?: number;
   cve?: string;
   evidence?: string;
@@ -316,6 +401,17 @@ export const ScanType = {
   enumeration: 'enumeration',
   vulnerability: 'vulnerability',
   full: 'full',
+} as const;
+
+export type ScanProfile = typeof ScanProfile[keyof typeof ScanProfile];
+
+
+export const ScanProfile = {
+  passive: 'passive',
+  safe_active: 'safe_active',
+  deep_authorized: 'deep_authorized',
+  authenticated: 'authenticated',
+  lab: 'lab',
 } as const;
 
 export type ScanStatus = typeof ScanStatus[keyof typeof ScanStatus];
@@ -333,6 +429,11 @@ export interface Scan {
   projectId: number;
   name: string;
   type?: ScanType;
+  profile?: ScanProfile;
+  /** @nullable */
+  policy?: string | null;
+  /** @nullable */
+  toolCapabilities?: string | null;
   status: ScanStatus;
   /**
      * @minimum 0
@@ -359,10 +460,22 @@ export const ScanInputType = {
   full: 'full',
 } as const;
 
+export type ScanInputProfile = typeof ScanInputProfile[keyof typeof ScanInputProfile];
+
+
+export const ScanInputProfile = {
+  passive: 'passive',
+  safe_active: 'safe_active',
+  deep_authorized: 'deep_authorized',
+  authenticated: 'authenticated',
+  lab: 'lab',
+} as const;
+
 export interface ScanInput {
   /** @minLength 1 */
   name: string;
   type: ScanInputType;
+  profile?: ScanInputProfile;
 }
 
 export interface DashboardStats {

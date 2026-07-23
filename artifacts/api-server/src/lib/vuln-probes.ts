@@ -9,7 +9,7 @@
  *   • CVE   — NVD API cross-reference for detected technology versions
  */
 
-import type { RealFinding } from "./scanner";
+import { reserveScanRequest, type RealFinding } from "./scanner";
 import type { Target, LogFn } from "./scanner";
 
 const ts = () => new Date().toISOString();
@@ -18,6 +18,7 @@ async function probe(
   url: string,
   opts: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; followRedirects?: boolean } = {},
 ): Promise<{ status: number; headers: Record<string, string>; body: string } | null> {
+  if (!reserveScanRequest()) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 10_000);
   try {

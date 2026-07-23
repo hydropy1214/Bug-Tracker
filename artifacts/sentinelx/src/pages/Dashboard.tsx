@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type ScanType = "recon" | "enumeration" | "vulnerability" | "full";
+type ScanProfile = "passive" | "safe_active" | "deep_authorized" | "authenticated" | "lab";
 type Phase = "idle" | "scanning" | "complete" | "error";
 
 interface Scan {
@@ -21,6 +22,9 @@ interface Scan {
   startedAt: string | null;
   completedAt: string | null;
   type: string;
+  profile?: ScanProfile;
+  policy?: string | null;
+  toolCapabilities?: string | null;
 }
 
 interface Finding {
@@ -35,6 +39,14 @@ interface Finding {
   status: string;
   verification?: "verified" | "version_match" | "suspected" | "informational";
   confidence?: number;
+  evidenceQuality?: "weak" | "standard" | "strong";
+  verificationMethod?: string | null;
+  reproducibility?: "reproducible" | "intermittent" | "not_reproducible" | "not_tested";
+  affectedEndpoint?: string | null;
+  affectedParameter?: string | null;
+  negativeTests?: string | null;
+  limitations?: string | null;
+  toolInfo?: string | null;
 }
 
 interface ScanStatus {
@@ -49,6 +61,14 @@ const SCAN_TYPE_INFO: Record<ScanType, { label: string; icon: React.ReactNode; d
   enumeration:   { label: "Enumeration",   icon: <Server className="w-3.5 h-3.5" />,   desc: "Recon + Ports · Subdomains · Paths", time: "~3 min" },
   vulnerability: { label: "Vulnerability", icon: <AlertTriangle className="w-3.5 h-3.5"/>, desc: "Enum + SQLi · XSS · SSTI · SSRF · CORS", time: "~6 min" },
   full:          { label: "Full",          icon: <Shield className="w-3.5 h-3.5" />,   desc: "All checks + version matches · probes · Wayback", time: "~10 min" },
+};
+
+const PROFILE_INFO: Record<ScanProfile, { label: string; desc: string; budget: string }> = {
+  passive: { label: "Passive", desc: "DNS, TLS, headers, and fingerprinting only", budget: "80 requests" },
+  safe_active: { label: "Safe Active", desc: "Bounded active checks; no deep probes", budget: "300 requests" },
+  deep_authorized: { label: "Deep Authorized", desc: "Expanded probes for targets you own or have permission to test", budget: "1,200 requests" },
+  authenticated: { label: "Authenticated", desc: "Reserved for supplied test-session workflows", budget: "1,500 requests" },
+  lab: { label: "Lab", desc: "Deep checks plus callback-capable lab fixtures", budget: "2,000 requests" },
 };
 
 const SEV: Record<string, { label: string; color: string; bg: string; border: string; dot: string }> = {
@@ -169,6 +189,36 @@ function FindingCard({ finding }: { finding: Finding }) {
                 </div>
                 <pre className="text-[11px] font-mono text-foreground/70 whitespace-pre-wrap leading-relaxed">{finding.remediation}</pre>
               </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] font-mono">
+                <div className="rounded border border-border/60 bg-black/20 px-2 py-1.5">
+                  <span className="text-muted-foreground block uppercase">Evidence</span>
+                  <span className="text-foreground">{finding.evidenceQuality ?? "standard"}</span>
+                </div>
+                <div className="rounded border border-border/60 bg-black/20 px-2 py-1.5">
+                  <span className="text-muted-foreground block uppercase">Repeatability</span>
+                  <span className="text-foreground">{finding.reproducibility?.replaceAll("_", " ") ?? "not tested"}</span>
+                </div>
+                {finding.affectedParameter && (
+                  <div className="rounded border border-border/60 bg-black/20 px-2 py-1.5">
+                    <span className="text-muted-foreground block uppercase">Parameter</span>
+                    <span className="text-foreground break-all">{finding.affectedParameter}</span>
+                  </div>
+                )}
+                {finding.verificationMethod && (
+                  <div className="rounded border border-border/60 bg-black/20 px-2 py-1.5">
+                    <span className="text-muted-foreground block uppercase">Method</span>
+                    <span className="text-foreground">{finding.verificationMethod}</span>
+                  </div>
+                )}
+              </div>
+
+              {finding.negativeTests && (
+                <div>
+                  <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1.5">Negative Controls</div>
+                  <p className="text-[11px] font-mono text-foreground/70 whitespace-pre-wrap">{finding.negativeTests}</p>
+                </div>
+              )}
             </div>
           </motion.div>
         )}
@@ -203,6 +253,7 @@ function SeveritySummary({ findings }: { findings: Finding[] }) {
 export function Dashboard() {
   const [url, setUrl] = useState("");
   const [scanType, setScanType] = useState<ScanType>("full");
+  const [profile, setProfile] = useState<ScanProfile>("safe_active");
   const [showTypes, setShowTypes] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [scanId, setScanId] = useState<number | null>(null);
@@ -258,7 +309,7 @@ export function Dashboard() {
       const res = await fetch("/api/quick-scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: normalized, scanType }),
+        body: JSON.stringify({ url: normalized, scanType, profile }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Scan failed to start" }));
@@ -300,6 +351,7 @@ export function Dashboard() {
   });
   const logLines = (scan?.logs ?? "").split("\n").filter(Boolean);
   const typeInfo = SCAN_TYPE_INFO[scanType]!;
+  const profileInfo = PROFILE_INFO[profile];
 
   // Threat level for completed scans
   const confirmedFindings = findings.filter(f => (f.verification ?? "verified") === "verified");
@@ -397,6 +449,18 @@ export function Dashboard() {
             </AnimatePresence>
           </div>
 
+          <select
+            value={profile}
+            onChange={e => setProfile(e.target.value as ScanProfile)}
+            disabled={phase === "scanning"}
+            aria-label="Scan profile"
+            className="max-w-[170px] px-2.5 py-1.5 rounded border border-border bg-accent/50 text-xs font-mono text-foreground outline-none hover:border-primary/40 transition-all disabled:opacity-50"
+          >
+            {Object.entries(PROFILE_INFO).map(([key, info]) => (
+              <option key={key} value={key}>{info.label}</option>
+            ))}
+          </select>
+
           {/* Scan button */}
           <button
             onClick={startScan}
@@ -424,6 +488,7 @@ export function Dashboard() {
               <span className="uppercase tracking-wider">{typeInfo.label}:</span>
               <span>{typeInfo.desc}</span>
               <span className="ml-2 text-muted-foreground/50">· Est. {typeInfo.time}</span>
+              <span className="ml-2 text-primary/70">· {profileInfo.desc} · {profileInfo.budget}</span>
             </div>
           </div>
         )}
@@ -445,7 +510,7 @@ export function Dashboard() {
               <div className={cn("w-2 h-2 rounded-full", phase === "scanning" ? "bg-primary animate-pulse" : "bg-emerald-400")} />
               <span className="text-foreground uppercase tracking-wider">{target}</span>
               <span className="text-muted-foreground">·</span>
-              <span className="text-muted-foreground uppercase">{scanType} scan</span>
+               <span className="text-muted-foreground uppercase">{scanType} · {scan.profile ?? profile} profile</span>
             </div>
             <div className="flex items-center gap-3">
               {phase === "scanning" && scan.status === "running" && (
