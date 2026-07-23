@@ -1,0 +1,1 @@
+- [SentinelX scanner setup](sentinelx-scanner.md) — real tools installed (nmap, dig, whois); scanner uses them via execFileAsync + crt.sh/ipinfo.io/Wayback APIs
