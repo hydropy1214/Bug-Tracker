@@ -1,10 +1,18 @@
 import { Router, type IRouter } from "express";
-import { eq, sql } from "drizzle-orm";
-import { db, projectsTable, assetsTable, findingsTable, scansTable, activityTable } from "@workspace/db";
+import { eq, sql, and } from "drizzle-orm";
+import {
+  db,
+  projectsTable,
+  assetsTable,
+  findingsTable,
+  scansTable,
+  activityTable,
+} from "@workspace/db";
 import { GetDashboardActivityQueryParams } from "@workspace/api-zod";
 
 const router: IRouter = Router();
 
+// GET /dashboard/stats
 router.get("/dashboard/stats", async (_req, res): Promise<void> => {
   const [totalProjectsRow] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -31,17 +39,29 @@ router.get("/dashboard/stats", async (_req, res): Promise<void> => {
   const [criticalFindingsRow] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(findingsTable)
-    .where(sql`${findingsTable.severity} = 'critical' AND ${findingsTable.status} != 'resolved'`);
+    .where(
+      and(
+        eq(findingsTable.severity, "critical"),
+        eq(findingsTable.status, "open"),
+      ),
+    );
 
   const [highFindingsRow] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(findingsTable)
-    .where(sql`${findingsTable.severity} = 'high' AND ${findingsTable.status} != 'resolved'`);
+    .where(
+      and(
+        eq(findingsTable.severity, "high"),
+        eq(findingsTable.status, "open"),
+      ),
+    );
 
+  // "running" = active scans; include pending in the running count so the
+  // dashboard accurately reflects scans in-flight (queued + executing)
   const [runningScansRow] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(scansTable)
-    .where(sql`${scansTable.status} = 'running' OR ${scansTable.status} = 'pending'`);
+    .where(sql`${scansTable.status} IN ('running', 'pending')`);
 
   const [completedScansRow] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -61,33 +81,47 @@ router.get("/dashboard/stats", async (_req, res): Promise<void> => {
   });
 });
 
+// GET /dashboard/activity?limit=N
 router.get("/dashboard/activity", async (req, res): Promise<void> => {
-  const queryParams = GetDashboardActivityQueryParams.safeParse(req.query);
-  const limit = queryParams.success ? (queryParams.data.limit ?? 20) : 20;
+  const parsed = GetDashboardActivityQueryParams.safeParse(req.query);
+  const limit = parsed.success ? (parsed.data.limit ?? 20) : 20;
 
   const activity = await db
     .select()
     .from(activityTable)
-    .orderBy(sql`${activityTable.createdAt} desc`)
-    .limit(limit);
+    .orderBy(sql`${activityTable.createdAt} DESC`)
+    .limit(Math.min(limit, 100));
 
   res.json(activity);
 });
 
+// GET /dashboard/severity-breakdown
+// Counts open findings only — consistent with criticalFindings/highFindings in /stats
 router.get("/dashboard/severity-breakdown", async (_req, res): Promise<void> => {
-  const severities = ["critical", "high", "medium", "low", "info"] as const;
-
-  const counts = await Promise.all(
-    severities.map(async (s) => {
-      const [row] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(findingsTable)
-        .where(sql`${findingsTable.severity} = ${s} AND ${findingsTable.status} != 'resolved'`);
-      return [s, row?.count ?? 0] as const;
+  const rows = await db
+    .select({
+      severity: findingsTable.severity,
+      count: sql<number>`count(*)::int`,
     })
-  );
+    .from(findingsTable)
+    .where(eq(findingsTable.status, "open"))
+    .groupBy(findingsTable.severity);
 
-  res.json(Object.fromEntries(counts));
+  const breakdown: Record<string, number> = {
+    critical: 0,
+    high: 0,
+    medium: 0,
+    low: 0,
+    info: 0,
+  };
+
+  for (const row of rows) {
+    if (row.severity in breakdown) {
+      breakdown[row.severity] = row.count;
+    }
+  }
+
+  res.json(breakdown);
 });
 
 export default router;

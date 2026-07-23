@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { useGetDashboardStats, useHealthCheck } from "@workspace/api-client-react";
-import { Shield, Database, Server, Code2, Globe, Radar, Zap, ShieldCheck, Activity, FolderKanban, Target, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Shield, Database, Server, Code2, Globe, Radar, Zap, ShieldCheck, Activity, FolderKanban, Target, AlertTriangle, CheckCircle2, Settings as SettingsIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const STACK = [
@@ -46,7 +46,7 @@ export function Settings() {
       <motion.div variants={itemVariants}>
         <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-3 uppercase font-sans">
           <div className="w-8 h-8 rounded-sm bg-primary/10 border border-primary/30 flex items-center justify-center glow-primary">
-            <Settings className="w-4 h-4 text-primary" />
+            <SettingsIcon className="w-4 h-4 text-primary" />
           </div>
           System Config
         </h1>

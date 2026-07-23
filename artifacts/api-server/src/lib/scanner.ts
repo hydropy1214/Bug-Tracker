@@ -430,7 +430,7 @@ async function opensslTlsInfo(hostname: string, port: number): Promise<string> {
     const { stdout } = await execFileAsync(
       "openssl",
       ["s_client", "-connect", `${hostname}:${port}`, "-servername", hostname, "-brief", "-no_ign_eof"],
-      { timeout: 12_000, input: "Q\n" },
+      { timeout: 12_000 },
     );
     return stdout;
   } catch (err: any) {
@@ -610,7 +610,7 @@ async function checkTls(hostname: string, port: number, onLog: LogFn): Promise<R
       const { stdout, stderr } = await execFileAsync(
         "openssl",
         ["s_client", "-connect", `${hostname}:${port}`, "-servername", hostname, test.flag, "-brief"],
-        { timeout: 8_000, input: "Q\n" },
+        { timeout: 8_000 },
       ).catch((err: any) => ({ stdout: err.stdout ?? "", stderr: err.stderr ?? "" }));
       const combined = stdout + stderr;
       if (combined.includes("Verification:") || combined.includes("CONNECTED") || combined.includes("Protocol  :")) {

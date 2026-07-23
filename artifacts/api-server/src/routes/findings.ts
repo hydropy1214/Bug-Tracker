@@ -113,7 +113,30 @@ router.patch("/findings/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const updateData: Record<string, unknown> = { updatedAt: new Date() };
+  // Fetch the original finding before updating so we can detect status changes
+  const [original] = await db
+    .select()
+    .from(findingsTable)
+    .where(eq(findingsTable.id, params.data.id));
+
+  if (!original) {
+    res.status(404).json({ error: "Finding not found" });
+    return;
+  }
+
+  type FindingUpdate = {
+    updatedAt: Date;
+    title?: string;
+    description?: string;
+    severity?: string;
+    status?: string;
+    cvss?: number;
+    cve?: string;
+    evidence?: string;
+    remediation?: string;
+  };
+
+  const updateData: FindingUpdate = { updatedAt: new Date() };
   if (parsed.data.title !== undefined) updateData.title = parsed.data.title;
   if (parsed.data.description !== undefined) updateData.description = parsed.data.description;
   if (parsed.data.severity !== undefined) updateData.severity = parsed.data.severity;
@@ -134,8 +157,8 @@ router.patch("/findings/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  // Log activity when status changes (e.g. resolved)
-  if (parsed.data.status && parsed.data.status !== finding.status) {
+  // Log activity when status changes — compare new status against the original record
+  if (parsed.data.status && parsed.data.status !== original.status) {
     const [project] = await db
       .select({ name: projectsTable.name })
       .from(projectsTable)

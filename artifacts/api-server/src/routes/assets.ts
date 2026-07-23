@@ -71,7 +71,14 @@ router.patch("/assets/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const updateData: Record<string, unknown> = {};
+  type AssetUpdate = {
+    value?: string;
+    type?: string;
+    status?: string;
+    notes?: string;
+    technologies?: string[];
+  };
+  const updateData: AssetUpdate = {};
   if (parsed.data.value !== undefined) updateData.value = parsed.data.value;
   if (parsed.data.type !== undefined) updateData.type = parsed.data.type;
   if (parsed.data.status !== undefined) updateData.status = parsed.data.status;

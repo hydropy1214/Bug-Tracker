@@ -5,6 +5,7 @@ import {
   useGetScan,
   getListScansQueryKey,
   getGetScanQueryKey,
+  type Scan,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -68,7 +69,7 @@ export function ScansTab({ projectId, assetCount = 0 }: { projectId: number; ass
   // Always poll every 2 s while the Scans tab is mounted.
   // Derive hasActiveScans from the freshly-fetched data, not stale cache.
   const { data: scans, isLoading } = useListScans(projectId, {
-    query: { refetchInterval: 2000 },
+    query: { queryKey: getListScansQueryKey(projectId), refetchInterval: 2000 },
   });
 
   const hasActiveScans = scans?.some(s => isActiveStatus(s.status)) ?? false;
@@ -245,12 +246,12 @@ export function ScansTab({ projectId, assetCount = 0 }: { projectId: number; ass
           <Radar className="w-8 h-8 mb-3 opacity-20" />
           <p className="text-xs font-mono uppercase tracking-widest mb-2">No Scans Executed</p>
           <p className="text-[10px] font-mono text-muted-foreground/60">
-            {assetCount === 0 ? "Add assets first, then initiate a scan." : "Click "Initiate Scan" to begin."}
+            {assetCount === 0 ? "Add assets first, then initiate a scan." : 'Click "Initiate Scan" to begin.'}
           </p>
         </div>
       ) : (
         <div className="space-y-2">
-          {scans.map(scan => {
+          {scans.map((scan: Scan) => {
             const active = isActiveStatus(scan.status);
             const pct = scan.progress ?? 0;
             const isExpanded = expandedScanId === scan.id;
@@ -277,7 +278,7 @@ export function ScansTab({ projectId, assetCount = 0 }: { projectId: number; ass
                       <span className="font-mono text-sm font-bold text-foreground truncate">{scan.name}</span>
                       <TypeBadge type={scan.type || "recon"} />
                       <StatusBadge status={scan.status} />
-                      {scan.findingsCount > 0 && (
+                      {(scan.findingsCount ?? 0) > 0 && (
                         <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-sm bg-orange-500/10 text-orange-400 border border-orange-500/20 uppercase tracking-widest">
                           {scan.findingsCount} finding{scan.findingsCount !== 1 ? "s" : ""}
                         </span>

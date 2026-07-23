@@ -30,9 +30,15 @@ const STATUS_STYLES: Record<string, { color: string; bg: string; border: string;
   archived: { color: "text-muted-foreground",   bg: "bg-accent",   border: "border-border",   dot: "bg-muted-foreground" },
 };
 
-export function ProjectDetail({ id, params, defaultTab = "assets" }: any) {
+interface ProjectDetailProps {
+  id?: string;
+  params?: { id?: string };
+  defaultTab?: "assets" | "findings" | "scans";
+}
+
+export function ProjectDetail({ id, params, defaultTab = "assets" }: ProjectDetailProps) {
   const [, setLocation] = useLocation();
-  const resolvedId = parseInt(id || params?.id, 10);
+  const resolvedId = parseInt(id ?? params?.id ?? "", 10);
 
   const { data: project, isLoading } = useGetProject(resolvedId, {
     query: { enabled: !!resolvedId, queryKey: getGetProjectQueryKey(resolvedId) }
