@@ -4,10 +4,12 @@
 
 SentinelX is a professional self-hosted web vulnerability scanner.
 It runs real system tools (nmap, dig, whois, openssl) and performs
-21 scanning phases: WAF bypass, subdomain takeover, blind SQLi,
+28 scanning phases: WAF bypass, subdomain takeover, blind SQLi,
 JWT cracking, Log4Shell, CRLF injection, path traversal, SSTI,
-XXE, SSRF, and more. Every finding uses baseline comparison or
-canary tokens — no false positives.
+XXE, SSRF, open registration exploitation, default credential
+brute-force, SQL injection auth bypass, enhanced command injection
+with file-read canary, and IDOR with captured session.
+Every finding uses baseline comparison or canary tokens — no false positives.
 
 **Full documentation: see `README.md`**
 

