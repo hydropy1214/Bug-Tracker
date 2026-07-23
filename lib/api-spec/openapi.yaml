@@ -177,7 +177,51 @@ paths:
               schema:
                 $ref: "#/components/schemas/Asset"
 
+  /projects/{projectId}/endpoints:
+    get:
+      operationId: listEndpoints
+      tags: [assets]
+      summary: List imported API endpoints for a project
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Imported API endpoint inventory
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Endpoint"
+
   /assets/{id}:
+    post:
+      operationId: importAssetApiSpec
+      tags: [assets]
+      summary: Import an OpenAPI or Swagger JSON document for an API asset
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiSpecImportInput"
+      responses:
+        "200":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSpecImportResult"
     patch:
       operationId: updateAsset
       tags: [assets]
@@ -549,6 +593,11 @@ components:
           type: array
           items:
             type: string
+        apiSpecVersion:
+          type: ["string", "null"]
+        apiSpecImportedAt:
+          type: ["string", "null"]
+          format: date-time
         createdAt:
           type: string
           format: date-time
@@ -569,6 +618,71 @@ components:
           type: array
           items:
             type: string
+
+    ApiSpecImportInput:
+      type: object
+      required: [spec]
+      properties:
+        spec:
+          description: OpenAPI/Swagger JSON object or JSON string
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: string
+        source:
+          type: string
+        baseUrl:
+          type: string
+
+    ApiSpecImportResult:
+      type: object
+      required: [assetId, projectId, version, imported]
+      properties:
+        assetId:
+          type: integer
+        projectId:
+          type: integer
+        version:
+          type: string
+        baseUrl:
+          type: ["string", "null"]
+        imported:
+          type: integer
+
+    Endpoint:
+      type: object
+      required: [id, projectId, method, path, source, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        projectId:
+          type: integer
+        assetId:
+          type: ["integer", "null"]
+        method:
+          type: string
+        path:
+          type: string
+        operationId:
+          type: ["string", "null"]
+        summary:
+          type: ["string", "null"]
+        parameters:
+          type: ["string", "null"]
+        requestBody:
+          type: ["string", "null"]
+        security:
+          type: ["string", "null"]
+        source:
+          type: string
+        baseUrl:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
 
     AssetUpdate:
       type: object
@@ -811,6 +925,10 @@ components:
         profile:
           type: string
           enum: [passive, safe_active, deep_authorized, authenticated, lab]
+        authHeaders:
+          type: object
+          additionalProperties:
+            type: string
 
     DashboardStats:
       type: object

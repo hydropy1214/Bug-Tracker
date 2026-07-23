@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { eq, desc, and } from "drizzle-orm";
 import { db, scansTable, activityTable, projectsTable, findingsTable, assetsTable } from "@workspace/db";
 import { resolveScanPolicy } from "../lib/scanner";
+import { encryptAuthHeaders } from "../lib/auth-context";
 import {
   ListScansParams,
   CreateScanParams,
@@ -50,6 +51,7 @@ router.post("/projects/:projectId/scans", async (req, res): Promise<void> => {
       type: parsed.data.type,
       profile: parsed.data.profile ?? "safe_active",
       policy: JSON.stringify(resolveScanPolicy(parsed.data.profile)),
+      authContext: parsed.data.authHeaders ? encryptAuthHeaders(parsed.data.authHeaders) : null,
       status: "pending",
       progress: 0,
       findingsCount: 0,

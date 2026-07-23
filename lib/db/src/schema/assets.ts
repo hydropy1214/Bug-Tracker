@@ -11,6 +11,9 @@ export const assetsTable = pgTable("assets", {
   status: text("status").notNull().default("active"),
   notes: text("notes"),
   technologies: text("technologies").array().notNull().default([]),
+  apiSpec: text("api_spec"),
+  apiSpecVersion: text("api_spec_version"),
+  apiSpecImportedAt: timestamp("api_spec_imported_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

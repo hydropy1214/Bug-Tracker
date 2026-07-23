@@ -11,6 +11,7 @@ export const scansTable = pgTable("scans", {
   profile: text("profile").notNull().default("safe_active"),
   policy: text("policy"),
   toolCapabilities: text("tool_capabilities"),
+   authContext: text("auth_context"),
   status: text("status").notNull().default("pending"),
   progress: integer("progress").notNull().default(0),
   findingsCount: integer("findings_count").notNull().default(0),

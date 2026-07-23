@@ -4,12 +4,14 @@ import { z } from "zod/v4";
 import { projectsTable } from "./projects";
 import { assetsTable } from "./assets";
 import { scansTable } from "./scans";
+import { endpointsTable } from "./endpoints";
 
 export const findingsTable = pgTable("findings", {
   id: serial("id").primaryKey(),
   projectId: integer("project_id").notNull().references(() => projectsTable.id, { onDelete: "cascade" }),
   scanId: integer("scan_id").references(() => scansTable.id, { onDelete: "set null" }),
   assetId: integer("asset_id").references(() => assetsTable.id, { onDelete: "set null" }),
+  endpointId: integer("endpoint_id").references(() => endpointsTable.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   description: text("description"),
   severity: text("severity").notNull().default("medium"),

@@ -9,11 +9,17 @@
 import { Router, type IRouter } from "express";
 import { db, projectsTable, assetsTable, scansTable, activityTable } from "@workspace/db";
 import { resolveScanPolicy, type ScanProfile } from "../lib/scanner";
+import { encryptAuthHeaders } from "../lib/auth-context";
 
 const router: IRouter = Router();
 
 router.post("/quick-scan", async (req, res): Promise<void> => {
-  const { url, scanType = "full", profile = "safe_active" } = req.body as { url?: string; scanType?: string; profile?: string };
+  const { url, scanType = "full", profile = "safe_active", authHeaders } = req.body as {
+    url?: string;
+    scanType?: string;
+    profile?: string;
+    authHeaders?: Record<string, string>;
+  };
 
   if (!url || typeof url !== "string") {
     res.status(400).json({ error: "url is required" });
@@ -31,6 +37,10 @@ router.post("/quick-scan", async (req, res): Promise<void> => {
     return;
   }
   const policy = resolveScanPolicy(profile);
+  if (authHeaders !== undefined && (!authHeaders || typeof authHeaders !== "object" || Array.isArray(authHeaders))) {
+    res.status(400).json({ error: "authHeaders must be an object of header names to values" });
+    return;
+  }
 
   // Normalise URL and determine asset type
   let normalised = url.trim();
@@ -92,6 +102,7 @@ router.post("/quick-scan", async (req, res): Promise<void> => {
       type: scanType,
       profile,
       policy: JSON.stringify(policy),
+      authContext: authHeaders ? encryptAuthHeaders(authHeaders) : null,
       status: "pending",
       progress: 0,
       findingsCount: 0,
