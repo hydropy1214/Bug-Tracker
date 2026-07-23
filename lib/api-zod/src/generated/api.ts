@@ -142,6 +142,8 @@ export const ListAssetsResponseItem = zod.object({
   "status": zod.enum(['active', 'inactive', 'unknown']),
   "notes": zod.string().nullish(),
   "technologies": zod.array(zod.string()).optional(),
+  "apiSpecVersion": zod.string().nullish(),
+  "apiSpecImportedAt": zod.coerce.date().nullish(),
   "createdAt": zod.coerce.date()
 })
 export const ListAssetsResponse = zod.array(ListAssetsResponseItem)
@@ -172,7 +174,57 @@ export const CreateAssetResponse = zod.object({
   "status": zod.enum(['active', 'inactive', 'unknown']),
   "notes": zod.string().nullish(),
   "technologies": zod.array(zod.string()).optional(),
+  "apiSpecVersion": zod.string().nullish(),
+  "apiSpecImportedAt": zod.coerce.date().nullish(),
   "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary List imported API endpoints for a project
+ */
+export const ListEndpointsParams = zod.object({
+  "projectId": zod.coerce.number()
+})
+
+export const ListEndpointsResponseItem = zod.object({
+  "id": zod.number(),
+  "projectId": zod.number(),
+  "assetId": zod.number().nullish(),
+  "method": zod.string(),
+  "path": zod.string(),
+  "operationId": zod.string().nullish(),
+  "summary": zod.string().nullish(),
+  "parameters": zod.string().nullish(),
+  "requestBody": zod.string().nullish(),
+  "security": zod.string().nullish(),
+  "source": zod.string(),
+  "baseUrl": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+export const ListEndpointsResponse = zod.array(ListEndpointsResponseItem)
+
+
+/**
+ * @summary Import an OpenAPI or Swagger JSON document for an API asset
+ */
+export const ImportAssetApiSpecParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ImportAssetApiSpecBody = zod.object({
+  "spec": zod.union([zod.record(zod.string(), zod.unknown()),zod.string()]).describe('OpenAPI\/Swagger JSON object or JSON string'),
+  "source": zod.string().optional(),
+  "baseUrl": zod.string().optional()
+})
+
+export const ImportAssetApiSpecResponse = zod.object({
+  "assetId": zod.number(),
+  "projectId": zod.number(),
+  "version": zod.string(),
+  "baseUrl": zod.string().nullish(),
+  "imported": zod.number()
 })
 
 
@@ -199,6 +251,8 @@ export const UpdateAssetResponse = zod.object({
   "status": zod.enum(['active', 'inactive', 'unknown']),
   "notes": zod.string().nullish(),
   "technologies": zod.array(zod.string()).optional(),
+  "apiSpecVersion": zod.string().nullish(),
+  "apiSpecImportedAt": zod.coerce.date().nullish(),
   "createdAt": zod.coerce.date()
 })
 
@@ -467,6 +521,7 @@ export const ListScansResponseItem = zod.object({
   "status": zod.enum(['pending', 'running', 'completed', 'failed']),
   "progress": zod.number().min(listScansResponseProgressMin).max(listScansResponseProgressMax).optional(),
   "findingsCount": zod.number().optional(),
+  "wafBlocked": zod.boolean().optional(),
   "startedAt": zod.coerce.date().nullish(),
   "completedAt": zod.coerce.date().nullish(),
   "createdAt": zod.coerce.date(),
@@ -488,7 +543,8 @@ export const CreateScanParams = zod.object({
 export const CreateScanBody = zod.object({
   "name": zod.string().min(1),
   "type": zod.enum(['recon', 'enumeration', 'vulnerability', 'full']),
-  "profile": zod.enum(['passive', 'safe_active', 'deep_authorized', 'authenticated', 'lab']).optional()
+  "profile": zod.enum(['passive', 'safe_active', 'deep_authorized', 'authenticated', 'lab']).optional(),
+  "authHeaders": zod.record(zod.string(), zod.string()).optional()
 })
 
 export const createScanResponseProgressMin = 0;
@@ -507,6 +563,7 @@ export const CreateScanResponse = zod.object({
   "status": zod.enum(['pending', 'running', 'completed', 'failed']),
   "progress": zod.number().min(createScanResponseProgressMin).max(createScanResponseProgressMax).optional(),
   "findingsCount": zod.number().optional(),
+  "wafBlocked": zod.boolean().optional(),
   "startedAt": zod.coerce.date().nullish(),
   "completedAt": zod.coerce.date().nullish(),
   "createdAt": zod.coerce.date(),
@@ -537,6 +594,7 @@ export const GetScanResponse = zod.object({
   "status": zod.enum(['pending', 'running', 'completed', 'failed']),
   "progress": zod.number().min(getScanResponseProgressMin).max(getScanResponseProgressMax).optional(),
   "findingsCount": zod.number().optional(),
+  "wafBlocked": zod.boolean().optional(),
   "startedAt": zod.coerce.date().nullish(),
   "completedAt": zod.coerce.date().nullish(),
   "createdAt": zod.coerce.date(),

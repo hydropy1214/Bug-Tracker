@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { projectsTable } from "./projects";
@@ -15,6 +15,7 @@ export const scansTable = pgTable("scans", {
   status: text("status").notNull().default("pending"),
   progress: integer("progress").notNull().default(0),
   findingsCount: integer("findings_count").notNull().default(0),
+  wafBlocked: boolean("waf_blocked").notNull().default(false),
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   logs: text("logs"),

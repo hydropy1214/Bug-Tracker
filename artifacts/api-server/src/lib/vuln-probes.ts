@@ -9,7 +9,14 @@
  *   • CVE   — NVD API cross-reference for detected technology versions
  */
 
-import { reserveScanRequest, type RealFinding } from "./scanner";
+import {
+  activeProbesAllowed,
+  isContextualReflection,
+  isWafChallengeResponse,
+  noteWafChallengeDetected,
+  reserveScanRequest,
+  type RealFinding,
+} from "./scanner";
 import type { Target, LogFn } from "./scanner";
 
 const ts = () => new Date().toISOString();
@@ -18,6 +25,7 @@ async function probe(
   url: string,
   opts: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; followRedirects?: boolean } = {},
 ): Promise<{ status: number; headers: Record<string, string>; body: string } | null> {
+  if (!activeProbesAllowed()) return null;
   if (!reserveScanRequest()) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 10_000);
@@ -33,6 +41,10 @@ async function probe(
     res.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
     let body = "";
     try { body = await res.text(); } catch { /* ignore */ }
+    if (isWafChallengeResponse(res.status, headers)) {
+      await noteWafChallengeDetected();
+      return null;
+    }
     return { status: res.status, headers, body: body.slice(0, 15_000) };
   } catch {
     return null;
@@ -109,8 +121,8 @@ export async function checkSSTI(target: Target, onLog: LogFn): Promise<RealFindi
 
       // ── Step 1: Reflection gate ───────────────────────────────────────────
       // If the raw payload appears in the response the engine didn't evaluate it.
-      const payloadReflected = cleanBody.includes(payload) ||
-                               cleanBody.includes(encodeURIComponent(payload));
+      const payloadReflected = isContextualReflection(cleanBody, payload) ||
+                               isContextualReflection(cleanBody, encodeURIComponent(payload));
       if (payloadReflected) continue; // engine reflected, not evaluated
 
       // ── Step 2: Math result must be present ───────────────────────────────
@@ -152,7 +164,7 @@ export async function checkSSTI(target: Target, onLog: LogFn): Promise<RealFindi
       const verified = canaryHit || mathDoublePass;
       const suspected = !verified && nearPayloadRef && !cleanBaseline.includes(result);
 
-      if (!verified && !suspected) continue;
+      if (!activeProbesAllowed() || (!verified && !suspected)) continue;
 
       const checksPassedParts: string[] = [];
       if (canaryHit)       checksPassedParts.push("unique-canary (SENTINELX_SSTI_CONFIRM)");
@@ -625,7 +637,7 @@ export async function checkNoSqlInjection(target: Target, onLog: LogFn): Promise
       const isSuccess = r.status === 200 && SUCCESS_SIGNALS.some(s => bodyLower.includes(s));
       const baselineBodyLen = baseline?.body.length ?? 0;
       const responseChangedSignificantly = Math.abs(r.body.length - baselineBodyLen) > 100;
-      if (isSuccess && responseChangedSignificantly) {
+      if (activeProbesAllowed() && isSuccess && responseChangedSignificantly) {
         findings.push({
           title: "NoSQL Injection — MongoDB Operator Authentication Bypass",
           severity: "critical",
@@ -653,7 +665,7 @@ export async function checkNoSqlInjection(target: Target, onLog: LogFn): Promise
       if (!r) continue;
       const bodyLower = r.body.toLowerCase();
       const isSuccess = r.status === 200 && SUCCESS_SIGNALS.some(s => bodyLower.includes(s));
-      if (isSuccess) {
+      if (activeProbesAllowed() && isSuccess) {
         findings.push({
           title: "NoSQL Injection — Form-Encoded MongoDB Operator Bypass",
           severity: "critical",
@@ -678,10 +690,10 @@ export async function checkNoSqlInjection(target: Target, onLog: LogFn): Promise
     if (!r || !baseline) continue;
     const statusChanged = r.status !== baseline.status;
     const lengthChanged = Math.abs(r.body.length - baseline.body.length) > 200;
-    if (statusChanged || lengthChanged) {
+    if (activeProbesAllowed() && (statusChanged || lengthChanged)) {
       const r2 = await probe(`${target.url.replace(/\/$/, "")}?${param}[$gt]=`, { timeoutMs: 8_000 });
       const r3 = await probe(`${target.url.replace(/\/$/, "")}?${param}[$regex]=.*`, { timeoutMs: 8_000 });
-      if (r2 && r3 && r2.status === r.status && Math.abs(r2.body.length - r.body.length) < 50) {
+      if (activeProbesAllowed() && r2 && r3 && r2.status === r.status && Math.abs(r2.body.length - r.body.length) < 50) {
         findings.push({
           title: "NoSQL Injection Signal — Operator Parameters Affect Response",
           severity: "high",

@@ -18,6 +18,7 @@ interface Scan {
   progress: number;
   logs: string | null;
   findingsCount: number;
+  wafBlocked: boolean;
   startedAt: string | null;
   completedAt: string | null;
   type: string;
@@ -558,6 +559,18 @@ export function Dashboard() {
             <div className="px-5 py-3 border-b border-border/40 flex items-center gap-3 flex-wrap">
               <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Risk Summary:</span>
               <SeveritySummary findings={findings} />
+            </div>
+          )}
+
+          {scan.wafBlocked && (
+            <div className="mx-5 mb-3 flex items-start gap-3 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-yellow-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-yellow-400" />
+              <div>
+                <p className="font-mono text-xs font-bold uppercase tracking-wider">WAF challenge detected</p>
+                <p className="mt-1 text-xs text-yellow-100/80">
+                  Active probes were suspended after the target served a WAF challenge. Findings from challenge responses are informational and may be false positives.
+                </p>
+              </div>
             </div>
           )}
 

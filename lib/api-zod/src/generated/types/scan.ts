@@ -26,6 +26,7 @@ export interface Scan {
      */
   progress?: number;
   findingsCount?: number;
+  wafBlocked?: boolean;
   /** @nullable */
   startedAt?: Date | null;
   /** @nullable */

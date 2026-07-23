@@ -102,6 +102,7 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
       progress: 0,
       startedAt: new Date(),
       logs: "",
+      wafBlocked: false,
       policy: JSON.stringify(policy),
       toolCapabilities: capabilityJson,
     })
@@ -141,6 +142,7 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
 
   // ── Run real scanner against each asset ──────────────────────────────────
   let totalFindingsAdded = 0;
+  let wafBlocked = false;
   const seenTitles = new Set<string>(); // deduplicate same finding across assets
 
   for (const asset of assets) {
@@ -158,7 +160,7 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
     }
 
     // Wire the scanner's log output into the scan's log stream
-    const assetFindings = await scanTarget(
+    const scanResult = await scanTarget(
       asset.value,
       asset.type,
       scan.type as ScanType,
@@ -172,6 +174,14 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
       policy,
       authHeaders,
     );
+    const assetFindings = scanResult.findings;
+    wafBlocked ||= scanResult.wafBlocked;
+    if (scanResult.wafBlocked) {
+      await db
+        .update(scansTable)
+        .set({ wafBlocked: true })
+        .where(eq(scansTable.id, scan.id));
+    }
 
     // Insert real findings (deduplicate by title across assets)
     for (const finding of assetFindings) {
@@ -221,6 +231,7 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
       progress: 100,
       completedAt: new Date(),
       findingsCount: totalFindingsAdded,
+      wafBlocked,
     })
     .where(eq(scansTable.id, scan.id));
 

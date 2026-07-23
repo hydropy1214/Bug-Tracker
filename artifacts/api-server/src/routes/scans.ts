@@ -123,7 +123,7 @@ router.get("/scans/:id/status", async (req, res): Promise<void> => {
     .where(eq(findingsTable.scanId, scan.id))
     .orderBy(desc(findingsTable.createdAt));
 
-  res.json({ scan, findings });
+  res.json({ scan, findings, wafBlocked: scan.wafBlocked });
 });
 
 type ReportFinding = typeof findingsTable.$inferSelect;
@@ -158,11 +158,13 @@ function buildTechnicalReport(scan: typeof scansTable.$inferSelect, findings: Re
       type: scan.type,
       profile: scan.profile,
       status: scan.status,
+      wafBlocked: scan.wafBlocked,
       startedAt: scan.startedAt,
       completedAt: scan.completedAt,
       policy: scan.policy ? JSON.parse(scan.policy) : null,
       toolCapabilities: scan.toolCapabilities ? JSON.parse(scan.toolCapabilities) : [],
     },
+    wafBlocked: scan.wafBlocked,
     summary: {
       total: findings.length,
       confirmed: confirmed.length,
@@ -198,6 +200,7 @@ function buildSarif(scan: typeof scansTable.$inferSelect, findings: ReportFindin
       properties: {
         scanId: scan.id,
         profile: scan.profile,
+        wafBlocked: scan.wafBlocked,
         verificationPolicy: "Findings are evidence-classified; suspected signals are not confirmed exploits.",
       },
       results: findings.map((finding) => ({

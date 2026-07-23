@@ -24,7 +24,17 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const dnsResolve = dns.promises;
-const scanContext = new AsyncLocalStorage<{ remaining: number; exhaustedNotified: boolean; authHeaders?: Record<string, string> }>();
+interface ScanContext {
+  remaining: number;
+  exhaustedNotified: boolean;
+  authHeaders?: Record<string, string>;
+  wafChallengeDetected: boolean;
+  wafChallengeLogEmitted: boolean;
+  activeProbeDepth: number;
+  onWafChallenge?: () => void | Promise<void>;
+}
+
+const scanContext = new AsyncLocalStorage<ScanContext>();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -52,6 +62,11 @@ export interface RealFinding {
   compliance?: { owasp?: string[]; pci?: string[]; nist?: string[] };
 }
 
+export interface ScanResult {
+  findings: RealFinding[];
+  wafBlocked: boolean;
+}
+
 export interface Target {
   url: string;
   hostname: string;
@@ -67,6 +82,7 @@ interface ProbeResult {
   body: string;
   finalUrl: string;
   durationMs: number;
+  wafChallenge: boolean;
 }
 
 export type ScanType = "recon" | "enumeration" | "vulnerability" | "full";
@@ -187,6 +203,115 @@ export function remainingScanRequests(): number | null {
   return scanContext.getStore()?.remaining ?? null;
 }
 
+/** Whether the current asset has been served a WAF challenge page. */
+export function isWafChallengeDetected(): boolean {
+  return scanContext.getStore()?.wafChallengeDetected ?? false;
+}
+
+/** Active probes are disabled once a WAF challenge is observed. */
+export function activeProbesAllowed(): boolean {
+  return !(scanContext.getStore()?.wafChallengeDetected ?? false);
+}
+
+/** Record a challenge observed by either HTTP probe implementation. */
+export async function noteWafChallengeDetected(): Promise<void> {
+  await recordWafChallenge();
+}
+
+/**
+ * Run a check while marking all of its HTTP requests as active. Once a WAF
+ * challenge is seen, the shared probe wrapper returns null for subsequent
+ * active requests, while passive requests can continue.
+ */
+export async function runActiveChecks<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+  const context = scanContext.getStore();
+  if (!context || context.wafChallengeDetected) return fallback;
+  context.activeProbeDepth++;
+  try {
+    return await fn();
+  } finally {
+    context.activeProbeDepth--;
+  }
+}
+
+export function isWafChallengeResponse(status: number, headers: Record<string, string>): boolean {
+  if (status !== 403) return false;
+  const cfMitigated = (headers["cf-mitigated"] ?? "").trim().toLowerCase() === "challenge";
+  const serverCloudflare = (headers["server"] ?? "").toLowerCase().includes("cloudflare");
+  const cookies = (headers["set-cookie"] ?? "").toLowerCase();
+  const hasCloudflareCookie = /(?:^|[,;]\s*)__(?:cf_bm)|(?:^|[,;]\s*)cf_clearance\s*=/.test(cookies) ||
+    cookies.includes("__cf_bm=") || cookies.includes("cf_clearance=");
+  return cfMitigated || (serverCloudflare && hasCloudflareCookie);
+}
+
+/**
+ * Treat a payload as reflected only when it is not embedded in a long,
+ * hexadecimal-looking token such as a CDN challenge or request identifier.
+ */
+export function isContextualReflection(body: string, payload: string): boolean {
+  const candidates = new Set([payload]);
+  try {
+    candidates.add(decodeURIComponent(payload));
+  } catch {
+    // The original payload is still a valid candidate.
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    let offset = 0;
+    while (true) {
+      const position = body.indexOf(candidate, offset);
+      if (position === -1) break;
+      const before = body.slice(Math.max(0, position - 10), position);
+      const after = body.slice(position + candidate.length, position + candidate.length + 10);
+      const surrounding = `${before}${after}`;
+      const hexDigits = (surrounding.match(/[0-9a-f]/gi) ?? []).length;
+      const printable = [...surrounding].filter((character) => {
+        const code = character.charCodeAt(0);
+        return code >= 32 && code <= 126;
+      }).length;
+      if (
+        (surrounding.length === 0 || printable / surrounding.length >= 0.8) &&
+        hexDigits / Math.max(surrounding.length, 1) < 0.6
+      ) return true;
+      offset = position + Math.max(candidate.length, 1);
+    }
+  }
+  return false;
+}
+
+async function recordWafChallenge(): Promise<void> {
+  const context = scanContext.getStore();
+  if (!context || context.wafChallengeDetected) return;
+  context.wafChallengeDetected = true;
+  if (!context.wafChallengeLogEmitted) {
+    context.wafChallengeLogEmitted = true;
+    await context.onWafChallenge?.();
+  }
+}
+
+function downgradeWafChallengeFindings(findings: RealFinding[]): void {
+  if (!isWafChallengeDetected()) return;
+  for (const finding of findings) {
+    if (finding.verification === "informational" && finding.cvss === 0) continue;
+    finding.confidence = 25;
+    finding.verification = "informational";
+    finding.limitations = [
+      finding.limitations,
+      "WAF challenge response — false positive likely.",
+    ].filter(Boolean).join("\n");
+  }
+}
+
+function suppressWafSensitiveFindings(findings: RealFinding[]): void {
+  if (!isWafChallengeDetected()) return;
+  for (let index = findings.length - 1; index >= 0; index--) {
+    if (/\b(?:SSTI|NoSQL)\b/i.test(findings[index].title)) {
+      findings.splice(index, 1);
+    }
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // CORE HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -223,8 +348,13 @@ async function probe(
     followRedirects?: boolean;
     /** If true, skip merging stored auth headers (e.g. for auth-probing itself) */
     skipAuth?: boolean;
+    /** Active probes are suspended after a WAF challenge is detected. */
+    active?: boolean;
   } = {},
 ): Promise<ProbeResult | null> {
+  const context = scanContext.getStore();
+  const isActive = opts.active ?? ((context?.activeProbeDepth ?? 0) > 0);
+  if (isActive && context?.wafChallengeDetected) return null;
   if (!reserveScanRequest()) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 12_000);
@@ -252,6 +382,8 @@ async function probe(
     });
     let body = "";
     try { body = await res.text(); } catch { /* ignore */ }
+    const wafChallenge = isWafChallengeResponse(res.status, headers);
+    if (wafChallenge) await noteWafChallengeDetected();
     return {
       status: res.status,
       headers,
@@ -259,6 +391,7 @@ async function probe(
       body: body.slice(0, 10_000),
       finalUrl: res.url || url,
       durationMs: Date.now() - t0,
+      wafChallenge,
     };
   } catch {
     return null;
@@ -1852,9 +1985,11 @@ async function checkWebApp(target: Target, onLog: LogFn): Promise<RealFinding[]>
       const r = await probe(probeUrl, { timeoutMs: 8_000 });
       if (!r) continue;
       const contentType = (r.headers["content-type"] ?? "").toLowerCase();
-      const reflected = r.body.includes(payload) || r.body.includes(`xss${xssToken}`);
+      const reflected = isContextualReflection(r.body, payload) ||
+        isContextualReflection(r.body, `xss${xssToken}`);
       const executableHtml = contentType.includes("text/html") &&
         (/<script\b[^>]*>xss[a-z0-9]+<\/script>/i.test(r.body) || new RegExp(`onerror=alert\\(${xssToken}\\)`, "i").test(r.body));
+      if (!activeProbesAllowed()) break;
       if (reflected && executableHtml) {
         findings.push({
           title: "Reflected XSS — Script/Event Payload Returned Unescaped",
@@ -1890,7 +2025,7 @@ async function checkWebApp(target: Target, onLog: LogFn): Promise<RealFinding[]>
       const bodyLower = r.body.toLowerCase();
       const successSignals = ["welcome", "dashboard", "logged in", "token", "access_token", "session", '"user":', '"id":', '"role":'];
       const isSuccess = successSignals.some(s => bodyLower.includes(s));
-      if (r.status === 200 && isSuccess && (blStatus !== 200 || Math.abs(r.body.length - (nosqlBaseline?.body.length ?? 0)) > 100)) {
+      if (activeProbesAllowed() && r.status === 200 && isSuccess && (blStatus !== 200 || Math.abs(r.body.length - (nosqlBaseline?.body.length ?? 0)) > 100)) {
         findings.push({
           title: "NoSQL Injection — MongoDB Operator Authentication Bypass",
           severity: "critical",
@@ -2190,6 +2325,10 @@ async function checkWafAndBypass(target: Target, onLog: LogFn): Promise<{ findin
 
   const r = await probe(target.url, { timeoutMs: 12_000 });
   if (!r) return { findings, wafName: null };
+  if (r.wafChallenge || isWafChallengeDetected()) {
+    await onLog(`[${ts()}] WAF challenge response received during initial detection; bypass probes skipped.`);
+    return { findings, wafName: "Cloudflare" };
+  }
 
   // ── Detect WAF ─────────────────────────────────────────────────────────────
   let detectedWaf: string | null = null;
@@ -3111,15 +3250,23 @@ export async function scanTarget(
   onLog: LogFn,
   policy: ScanPolicy = resolveScanPolicy("safe_active"),
   authHeaders?: Record<string, string>,
-): Promise<RealFinding[]> {
+): Promise<ScanResult> {
   const target = normalizeTarget(value, assetType);
   if (!target) {
     await onLog(`[${ts()}] ERROR: Cannot normalise target "${value}" — skipping`);
-    return [];
+    return { findings: [], wafBlocked: false };
   }
 
   return scanContext.run(
-    { remaining: policy.requestBudget, exhaustedNotified: false, authHeaders },
+    {
+      remaining: policy.requestBudget,
+      exhaustedNotified: false,
+      authHeaders,
+      wafChallengeDetected: false,
+      wafChallengeLogEmitted: false,
+      activeProbeDepth: 0,
+      onWafChallenge: () => onLog(`[${ts()}] WAF challenge page detected — active probes suspended; only passive/informational checks running.`),
+    },
     async () => {
       const all: RealFinding[] = [];
       const add = (f: RealFinding[]) => { all.push(...f); };
@@ -3139,7 +3286,10 @@ export async function scanTarget(
 
   // ── Phase 1: WAF detection and bypass ─────────────────────────────────────
   await onLog(`[${ts()}] [Phase 1] WAF/CDN detection and bypass testing...`);
-  const { findings: wafFindings, wafName } = await checkWafAndBypass(target, onLog);
+  const { findings: wafFindings, wafName } = await runActiveChecks(
+    () => checkWafAndBypass(target, onLog),
+    { findings: [], wafName: null },
+  );
   add(wafFindings);
 
   // ── Phase 2: DNS enumeration ──────────────────────────────────────────────
@@ -3167,12 +3317,12 @@ export async function scanTarget(
 
     // Subdomain takeover check
     await onLog(`[${ts()}] [Phase 5b] Subdomain takeover detection...`);
-    add(await checkSubdomainTakeover(discoveredSubs, onLog));
+    add(await runActiveChecks(() => checkSubdomainTakeover(discoveredSubs, onLog), []));
   }
 
   // ── Phase 6: Port scanning (nmap) ─────────────────────────────────────────
   await onLog(`[${ts()}] [Phase 6] Full port scanning with nmap (service version detection)...`);
-  add(await checkPorts(target.hostname, "full", onLog));
+  add(await runActiveChecks(() => checkPorts(target.hostname, "full", onLog), []));
 
   // ── Phase 7: TLS / SSL analysis ───────────────────────────────────────────
   if (target.isHttps) {
@@ -3194,7 +3344,7 @@ export async function scanTarget(
 
   // ── Phase 10: Sensitive path discovery (deep mode always) ─────────────────
   await onLog(`[${ts()}] [Phase 10] Sensitive path discovery (deep mode — ${SENSITIVE_PATHS.length} paths)...`);
-  add(await checkSensitivePaths(target, true, onLog));
+  add(await runActiveChecks(() => checkSensitivePaths(target, true, onLog), []));
 
   // ── Phase 11: Wayback Machine endpoint discovery ───────────────────────────
   await onLog(`[${ts()}] [Phase 11] Wayback Machine historical endpoint discovery...`);
@@ -3202,55 +3352,55 @@ export async function scanTarget(
 
   // ── Phase 12: Web application vulnerability probes ────────────────────────
   await onLog(`[${ts()}] [Phase 12] Web app probes — SQLi (error+blind) · XSS · NoSQL · CMDi · redirects · methods...`);
-  add(await checkWebApp(target, onLog));
+  add(await runActiveChecks(() => checkWebApp(target, onLog), []));
 
   // ── Phase 13: API surface discovery ──────────────────────────────────────
   await onLog(`[${ts()}] [Phase 13] API surface — GraphQL · Swagger · Spring Actuator · Telescope...`);
-  add(await checkApiSurface(target, onLog));
+  add(await runActiveChecks(() => checkApiSurface(target, onLog), []));
 
   // ── Phase 14: Host header injection ──────────────────────────────────────
   await onLog(`[${ts()}] [Phase 14] Host header injection / password-reset poisoning...`);
-  add(await checkHostHeaderInjection(target, onLog));
+  add(await runActiveChecks(() => checkHostHeaderInjection(target, onLog), []));
 
   // ── Phase 15: CRLF injection ──────────────────────────────────────────────
   await onLog(`[${ts()}] [Phase 15] CRLF injection / HTTP response splitting...`);
-  add(await checkCrlfInjection(target, onLog));
+  add(await runActiveChecks(() => checkCrlfInjection(target, onLog), []));
 
   // ── Phase 16: Path traversal ──────────────────────────────────────────────
   await onLog(`[${ts()}] [Phase 16] Path traversal / directory traversal...`);
-  add(await checkPathTraversal(target, onLog));
+  add(await runActiveChecks(() => checkPathTraversal(target, onLog), []));
 
   // ── Phase 17: JWT weakness detection ─────────────────────────────────────
   await onLog(`[${ts()}] [Phase 17] JWT algorithm, secret weakness, and advanced attack suite...`);
-  add(await checkJwtWeaknesses(target, onLog));
+  add(await runActiveChecks(() => checkJwtWeaknesses(target, onLog), []));
 
   // ── Phase 18: IDOR / Access Control ──────────────────────────────────────
   await onLog(`[${ts()}] [Phase 18] IDOR / Broken Object-Level Access Control + privilege escalation headers...`);
-  add(await checkIdorAndBola(target, onLog));
+  add(await runActiveChecks(() => checkIdorAndBola(target, onLog), []));
 
   // ── Phase 19: HTTP Request Smuggling ─────────────────────────────────────
   await onLog(`[${ts()}] [Phase 19] HTTP request smuggling — CL.TE · TE.CL · obfuscated TE...`);
-  add(await checkHttpRequestSmuggling(target, onLog));
+  add(await runActiveChecks(() => checkHttpRequestSmuggling(target, onLog), []));
 
   // ── Phase 20: Log4Shell / Spring4Shell surface ────────────────────────────
   await onLog(`[${ts()}] [Phase 20] Log4Shell (CVE-2021-44228) / Spring4Shell (CVE-2022-22965) surface...`);
-  add(await checkLog4ShellSurface(target, onLog));
+  add(await runActiveChecks(() => checkLog4ShellSurface(target, onLog), []));
 
   // ── Phase 21: Rate limiting on auth endpoints ─────────────────────────────
   await onLog(`[${ts()}] [Phase 21] Rate limiting / brute-force protection check...`);
-  add(await checkRateLimiting(target, onLog));
+  add(await runActiveChecks(() => checkRateLimiting(target, onLog), []));
 
   // ── Phase 22: Advanced vulnerability probes ───────────────────────────────
   {
     const { checkSSTI, checkXXE, checkSSRF, checkDeserialization, checkCommandInjection, checkNoSqlInjection, lookupCvesForTechs } = await import("./vuln-probes");
     await onLog(`[${ts()}] [Phase 22] Advanced probes — SSTI · XXE · SSRF · Deserialization · CMDi · NoSQL...`);
     const [sstiF, xxeF, ssrfF, deserF, cmdF, nosqlF] = await Promise.all([
-      checkSSTI(target, onLog),
-      checkXXE(target, onLog),
-      checkSSRF(target, onLog),
-      checkDeserialization(target, onLog),
-      checkCommandInjection(target, onLog),
-      checkNoSqlInjection(target, onLog),
+      runActiveChecks(() => checkSSTI(target, onLog), []),
+      runActiveChecks(() => checkXXE(target, onLog), []),
+      runActiveChecks(() => checkSSRF(target, onLog), []),
+      runActiveChecks(() => checkDeserialization(target, onLog), []),
+      runActiveChecks(() => checkCommandInjection(target, onLog), []),
+      runActiveChecks(() => checkNoSqlInjection(target, onLog), []),
     ]);
     add(sstiF); add(xxeF); add(ssrfF); add(deserF); add(cmdF); add(nosqlF);
 
@@ -3259,6 +3409,9 @@ export async function scanTarget(
     const { techs: detectedTechs } = await fingerprint(target, async () => {});
     add(await lookupCvesForTechs(detectedTechs, onLog));
   }
+
+  suppressWafSensitiveFindings(all);
+  downgradeWafChallengeFindings(all);
 
   // ── Compliance mapping ────────────────────────────────────────────────────
   applyComplianceMapping(all);
@@ -3298,7 +3451,7 @@ export async function scanTarget(
       await onLog(`[${ts()}] Compliance: OWASP Top 10 · PCI DSS v4.0 · NIST 800-53 mapped to findings`);
       await onLog(`[${ts()}] ═══════════════════════════════════════`);
 
-      return reportable;
+      return { findings: reportable, wafBlocked: isWafChallengeDetected() };
     },
   );
 }

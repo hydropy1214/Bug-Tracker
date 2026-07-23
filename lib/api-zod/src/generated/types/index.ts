@@ -8,6 +8,9 @@
 
 export * from './activityItem';
 export * from './activityItemType';
+export * from './apiSpecImportInput';
+export * from './apiSpecImportInputSpec';
+export * from './apiSpecImportResult';
 export * from './asset';
 export * from './assetInput';
 export * from './assetInputType';
@@ -17,6 +20,7 @@ export * from './assetUpdate';
 export * from './assetUpdateStatus';
 export * from './assetUpdateType';
 export * from './dashboardStats';
+export * from './endpoint';
 export * from './errorResponse';
 export * from './finding';
 export * from './findingEvidenceQuality';
@@ -46,6 +50,7 @@ export * from './projectUpdate';
 export * from './projectUpdateStatus';
 export * from './scan';
 export * from './scanInput';
+export * from './scanInputAuthHeaders';
 export * from './scanInputProfile';
 export * from './scanInputType';
 export * from './scanProfile';

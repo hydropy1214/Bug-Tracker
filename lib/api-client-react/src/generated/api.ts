@@ -21,10 +21,13 @@ import type {
 
 import type {
   ActivityItem,
+  ApiSpecImportInput,
+  ApiSpecImportResult,
   Asset,
   AssetInput,
   AssetUpdate,
   DashboardStats,
+  Endpoint,
   ErrorResponse,
   Finding,
   FindingInput,
@@ -658,6 +661,155 @@ export const useCreateAsset = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getCreateAssetMutationOptions(options));
+    }
+
+export const getListEndpointsUrl = (projectId: number,) => {
+
+
+
+
+  return `/api/projects/${projectId}/endpoints`
+}
+
+/**
+ * @summary List imported API endpoints for a project
+ */
+export const listEndpoints = async (projectId: number, options?: RequestInit): Promise<Endpoint[]> => {
+
+  return customFetch<Endpoint[]>(getListEndpointsUrl(projectId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListEndpointsQueryKey = (projectId: number,) => {
+    return [
+    `/api/projects/${projectId}/endpoints`
+    ] as const;
+    }
+
+
+export const getListEndpointsQueryOptions = <TData = Awaited<ReturnType<typeof listEndpoints>>, TError = ErrorType<unknown>>(projectId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEndpoints>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListEndpointsQueryKey(projectId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEndpoints>>> = ({ signal }) => listEndpoints(projectId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: projectId !== null && projectId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEndpoints>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListEndpointsQueryResult = NonNullable<Awaited<ReturnType<typeof listEndpoints>>>
+export type ListEndpointsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List imported API endpoints for a project
+ */
+
+export function useListEndpoints<TData = Awaited<ReturnType<typeof listEndpoints>>, TError = ErrorType<unknown>>(
+ projectId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEndpoints>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListEndpointsQueryOptions(projectId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getImportAssetApiSpecUrl = (id: number,) => {
+
+
+
+
+  return `/api/assets/${id}`
+}
+
+/**
+ * @summary Import an OpenAPI or Swagger JSON document for an API asset
+ */
+export const importAssetApiSpec = async (id: number,
+    apiSpecImportInput: ApiSpecImportInput, options?: RequestInit): Promise<ApiSpecImportResult> => {
+
+  return customFetch<ApiSpecImportResult>(getImportAssetApiSpecUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(apiSpecImportInput)
+  }
+);}
+
+
+
+
+
+export const getImportAssetApiSpecMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof importAssetApiSpec>>, TError,{id: number;data: BodyType<ApiSpecImportInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof importAssetApiSpec>>, TError,{id: number;data: BodyType<ApiSpecImportInput>}, TContext> => {
+
+const mutationKey = ['importAssetApiSpec'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof importAssetApiSpec>>, {id: number;data: BodyType<ApiSpecImportInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  importAssetApiSpec(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ImportAssetApiSpecMutationResult = NonNullable<Awaited<ReturnType<typeof importAssetApiSpec>>>
+    export type ImportAssetApiSpecMutationBody = BodyType<ApiSpecImportInput>
+    export type ImportAssetApiSpecMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Import an OpenAPI or Swagger JSON document for an API asset
+ */
+export const useImportAssetApiSpec = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof importAssetApiSpec>>, TError,{id: number;data: BodyType<ApiSpecImportInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof importAssetApiSpec>>,
+        TError,
+        {id: number;data: BodyType<ApiSpecImportInput>},
+        TContext
+      > => {
+      return useMutation(getImportAssetApiSpecMutationOptions(options));
     }
 
 export const getUpdateAssetUrl = (id: number,) => {

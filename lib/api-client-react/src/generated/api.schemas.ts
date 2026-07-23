@@ -101,6 +101,10 @@ export interface Asset {
   /** @nullable */
   notes?: string | null;
   technologies?: string[];
+  /** @nullable */
+  apiSpecVersion?: string | null;
+  /** @nullable */
+  apiSpecImportedAt?: string | null;
   createdAt: string;
 }
 
@@ -121,6 +125,51 @@ export interface AssetInput {
   type: AssetInputType;
   notes?: string;
   technologies?: string[];
+}
+
+/**
+ * OpenAPI/Swagger JSON object or JSON string
+ */
+export type ApiSpecImportInputSpec = { [key: string]: unknown } | string;
+
+export interface ApiSpecImportInput {
+  /** OpenAPI/Swagger JSON object or JSON string */
+  spec: ApiSpecImportInputSpec;
+  source?: string;
+  baseUrl?: string;
+}
+
+export interface ApiSpecImportResult {
+  assetId: number;
+  projectId: number;
+  version: string;
+  /** @nullable */
+  baseUrl?: string | null;
+  imported: number;
+}
+
+export interface Endpoint {
+  id: number;
+  projectId: number;
+  /** @nullable */
+  assetId?: number | null;
+  method: string;
+  path: string;
+  /** @nullable */
+  operationId?: string | null;
+  /** @nullable */
+  summary?: string | null;
+  /** @nullable */
+  parameters?: string | null;
+  /** @nullable */
+  requestBody?: string | null;
+  /** @nullable */
+  security?: string | null;
+  source: string;
+  /** @nullable */
+  baseUrl?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type AssetUpdateType = typeof AssetUpdateType[keyof typeof AssetUpdateType];
@@ -441,6 +490,7 @@ export interface Scan {
      */
   progress?: number;
   findingsCount?: number;
+  wafBlocked?: boolean;
   /** @nullable */
   startedAt?: string | null;
   /** @nullable */
@@ -471,11 +521,14 @@ export const ScanInputProfile = {
   lab: 'lab',
 } as const;
 
+export type ScanInputAuthHeaders = {[key: string]: string};
+
 export interface ScanInput {
   /** @minLength 1 */
   name: string;
   type: ScanInputType;
   profile?: ScanInputProfile;
+  authHeaders?: ScanInputAuthHeaders;
 }
 
 export interface DashboardStats {

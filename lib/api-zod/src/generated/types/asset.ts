@@ -17,5 +17,9 @@ export interface Asset {
   /** @nullable */
   notes?: string | null;
   technologies?: string[];
+  /** @nullable */
+  apiSpecVersion?: string | null;
+  /** @nullable */
+  apiSpecImportedAt?: Date | null;
   createdAt: Date;
 }
