@@ -1,0 +1,161 @@
+import { Router, type IRouter } from "express";
+import { eq } from "drizzle-orm";
+import { db, findingsTable, activityTable, projectsTable } from "@workspace/db";
+import {
+  ListFindingsParams,
+  CreateFindingParams,
+  CreateFindingBody,
+  GetFindingParams,
+  UpdateFindingParams,
+  UpdateFindingBody,
+  DeleteFindingParams,
+} from "@workspace/api-zod";
+
+const router: IRouter = Router();
+
+router.get("/projects/:projectId/findings", async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.projectId) ? req.params.projectId[0] : req.params.projectId;
+  const params = ListFindingsParams.safeParse({ projectId: parseInt(raw, 10) });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const findings = await db
+    .select()
+    .from(findingsTable)
+    .where(eq(findingsTable.projectId, params.data.projectId))
+    .orderBy(findingsTable.createdAt);
+
+  res.json(findings);
+});
+
+router.post("/projects/:projectId/findings", async (req, res): Promise<void> => {
+  const rawProjectId = Array.isArray(req.params.projectId) ? req.params.projectId[0] : req.params.projectId;
+  const params = CreateFindingParams.safeParse({ projectId: parseInt(rawProjectId, 10) });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const parsed = CreateFindingBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const [finding] = await db
+    .insert(findingsTable)
+    .values({
+      projectId: params.data.projectId,
+      title: parsed.data.title,
+      description: parsed.data.description,
+      severity: parsed.data.severity,
+      status: parsed.data.status ?? "open",
+      assetId: parsed.data.assetId ?? null,
+      cvss: parsed.data.cvss ?? null,
+      cve: parsed.data.cve ?? null,
+      evidence: parsed.data.evidence ?? null,
+      remediation: parsed.data.remediation ?? null,
+    })
+    .returning();
+
+  // Log activity
+  const [project] = await db
+    .select({ name: projectsTable.name })
+    .from(projectsTable)
+    .where(eq(projectsTable.id, params.data.projectId));
+
+  await db.insert(activityTable).values({
+    type: "finding_created",
+    title: `New ${parsed.data.severity} finding`,
+    description: `${parsed.data.title} discovered in ${project?.name ?? "project"}`,
+    severity: parsed.data.severity,
+    projectId: params.data.projectId,
+    projectName: project?.name ?? null,
+  });
+
+  res.status(201).json(finding);
+});
+
+router.get("/findings/:id", async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const params = GetFindingParams.safeParse({ id: parseInt(raw, 10) });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const [finding] = await db
+    .select()
+    .from(findingsTable)
+    .where(eq(findingsTable.id, params.data.id));
+
+  if (!finding) {
+    res.status(404).json({ error: "Finding not found" });
+    return;
+  }
+
+  res.json(finding);
+});
+
+router.patch("/findings/:id", async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const params = UpdateFindingParams.safeParse({ id: parseInt(raw, 10) });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const parsed = UpdateFindingBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const updateData: Record<string, unknown> = { updatedAt: new Date() };
+  if (parsed.data.title !== undefined) updateData.title = parsed.data.title;
+  if (parsed.data.description !== undefined) updateData.description = parsed.data.description;
+  if (parsed.data.severity !== undefined) updateData.severity = parsed.data.severity;
+  if (parsed.data.status !== undefined) updateData.status = parsed.data.status;
+  if (parsed.data.cvss !== undefined) updateData.cvss = parsed.data.cvss;
+  if (parsed.data.cve !== undefined) updateData.cve = parsed.data.cve;
+  if (parsed.data.evidence !== undefined) updateData.evidence = parsed.data.evidence;
+  if (parsed.data.remediation !== undefined) updateData.remediation = parsed.data.remediation;
+
+  const [finding] = await db
+    .update(findingsTable)
+    .set(updateData)
+    .where(eq(findingsTable.id, params.data.id))
+    .returning();
+
+  if (!finding) {
+    res.status(404).json({ error: "Finding not found" });
+    return;
+  }
+
+  res.json(finding);
+});
+
+router.delete("/findings/:id", async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const params = DeleteFindingParams.safeParse({ id: parseInt(raw, 10) });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const [finding] = await db
+    .delete(findingsTable)
+    .where(eq(findingsTable.id, params.data.id))
+    .returning();
+
+  if (!finding) {
+    res.status(404).json({ error: "Finding not found" });
+    return;
+  }
+
+  res.sendStatus(204);
+});
+
+export default router;

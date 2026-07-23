@@ -1,0 +1,437 @@
+If your goal is to build a **professional web-based bug bounty platform** for **authorized security testing** (your own assets or programs that permit testing), then don't ask Replit AI to "build a scanner." Ask it to build a **modular enterprise application**.
+
+Use the prompt below as your starting point.
+
+# Build SentinelX - Enterprise Bug Bounty & Attack Surface Management Platform
+
+You are a senior team consisting of:
+
+* Principal Security Engineer
+* Staff Backend Engineer
+* Staff Frontend Engineer
+* DevOps Engineer
+* UI/UX Designer
+* Database Architect
+* QA Engineer
+
+Your task is to build a production-grade web application named **SentinelX**.
+
+The platform is ONLY intended for authorized security testing of assets owned by the user or explicitly covered by bug bounty or penetration testing authorization.
+
+The project must be modular, scalable, secure, and suitable for deployment on a VPS using Docker.
+
+---
+
+## Technology Stack
+
+Frontend
+
+* Next.js 15
+* React 19
+* TypeScript
+* Tailwind CSS
+* shadcn/ui
+* React Query
+* Zustand
+* Framer Motion
+
+Backend
+
+* FastAPI (Python)
+* SQLAlchemy
+* PostgreSQL
+* Redis
+* Celery
+* WebSockets
+* JWT Authentication
+
+Infrastructure
+
+* Docker
+* Docker Compose
+* Nginx
+* GitHub Actions
+* Alembic migrations
+
+---
+
+## Architecture
+
+Use a modular microservice architecture.
+
+Services include:
+
+* frontend
+* api
+* worker
+* scheduler
+* redis
+* postgres
+* nginx
+
+Each scanning engine must be an independent module.
+
+No monolithic code.
+
+---
+
+## Dashboard
+
+Beautiful modern UI.
+
+Dark mode.
+
+Responsive.
+
+Real-time updates.
+
+Show
+
+* Running scans
+* Completed scans
+* Asset count
+* Vulnerabilities
+* Scan queue
+* Worker status
+* Resource usage
+* Notifications
+* Reports
+
+---
+
+## User Management
+
+* Registration
+* Login
+* MFA
+* API Keys
+* Teams
+* Roles
+* Audit Logs
+
+---
+
+## Projects
+
+Users can create unlimited projects.
+
+Each project contains
+
+* Domains
+* Wildcards
+* APIs
+* IP ranges
+* Notes
+* Scan schedules
+
+---
+
+## Asset Discovery
+
+Integrate configurable discovery engines for authorized targets.
+
+Support importing results and integrating external discovery utilities where appropriate.
+
+Store historical assets.
+
+Track changes over time.
+
+---
+
+## HTTP Enumeration
+
+Discover
+
+* URLs
+* Parameters
+* Headers
+* Cookies
+* Technologies
+* Status codes
+* Redirects
+
+Fingerprint
+
+* Framework
+* CDN
+* WAF
+* Web Server
+* Programming Language
+
+---
+
+## API Discovery
+
+Support
+
+* OpenAPI/Swagger import
+* GraphQL schema import
+* Postman collection import
+
+Display all discovered endpoints.
+
+---
+
+## JavaScript Analysis
+
+Extract
+
+* URLs
+* API endpoints
+* Secrets accidentally exposed
+* Tokens
+* Keys
+* Internal paths
+
+Maintain dependency graphs.
+
+---
+
+## Cloud Discovery
+
+Display publicly discoverable cloud resources associated with authorized assets.
+
+Track changes over time.
+
+---
+
+## Security Analysis Modules
+
+Provide a plugin framework that allows running safe, authorized security checks and integrating approved external scanners.
+
+Each module should have:
+
+* Configuration
+* Timeout
+* Concurrency
+* Logging
+* Retry support
+* Structured results
+
+Include severity classification, evidence storage, and remediation guidance.
+
+---
+
+## AI Assistant
+
+Include AI features that
+
+* summarize scan results
+* remove duplicate findings
+* explain findings
+* prioritize issues
+* generate executive summaries
+* generate technical reports
+* suggest remediation
+* answer questions about previous scans
+
+Never fabricate vulnerabilities.
+
+Always cite scan evidence.
+
+---
+
+## Reports
+
+Generate
+
+* HTML
+* PDF
+* Markdown
+* JSON
+
+Include
+
+Executive Summary
+
+Risk Score
+
+Charts
+
+Timeline
+
+Assets
+
+Evidence
+
+Recommendations
+
+---
+
+## Notifications
+
+Support
+
+* Email
+* Slack
+* Discord
+* Microsoft Teams
+* Webhooks
+
+---
+
+## Scheduling
+
+Allow
+
+Hourly
+
+Daily
+
+Weekly
+
+Monthly
+
+Custom Cron
+
+---
+
+## Search
+
+Global search across
+
+Projects
+
+Assets
+
+Findings
+
+Reports
+
+Logs
+
+---
+
+## Database
+
+Use PostgreSQL.
+
+Design normalized tables.
+
+Include migrations.
+
+Use indexes.
+
+Optimize queries.
+
+---
+
+## Security
+
+Rate limiting
+
+CSRF protection
+
+XSS protection
+
+Parameterized SQL
+
+Secure cookies
+
+JWT refresh
+
+RBAC
+
+Encrypted secrets
+
+Audit logging
+
+Input validation
+
+---
+
+## Performance
+
+Support at least
+
+* 100 concurrent users
+* 50 simultaneous scan jobs
+* Queue-based processing
+* Horizontal worker scaling
+* Result caching
+* Lazy loading
+* Pagination
+* Streaming logs
+
+---
+
+## UI
+
+Modern animations.
+
+Interactive charts.
+
+Live scan console.
+
+Asset graph.
+
+Finding explorer.
+
+Timeline.
+
+Risk heat map.
+
+Advanced filters.
+
+Command palette.
+
+Keyboard shortcuts.
+
+---
+
+## Code Quality
+
+Strict TypeScript.
+
+Python type hints.
+
+Unit tests.
+
+Integration tests.
+
+Linting.
+
+Formatting.
+
+CI/CD.
+
+Comprehensive documentation.
+
+No placeholder code.
+
+No TODOs.
+
+No duplicated code.
+
+Follow SOLID principles.
+
+---
+
+## Development Plan
+
+Implement in phases.
+
+Phase 1:
+Authentication, dashboard, projects, assets.
+
+Phase 2:
+Enumeration pipeline and scan orchestration.
+
+Phase 3:
+Security analysis plugin framework and reporting.
+
+Phase 4:
+AI assistant, notifications, scheduling, and performance tuning.
+
+At the end of each completed phase:
+
+* ensure the application builds successfully,
+* all tests pass,
+* Docker containers run correctly,
+* database migrations are applied,
+* APIs are documented,
+* and the UI is fully functional before moving to the next phase.
+
+This prompt will help Replit AI produce a solid application structure and workflow. For any actual security testing capabilities, keep them limited to targets you own or are explicitly authorized to assess, and integrate well-known tools responsibly rather than attempting to create an unrestricted offensive framework from scratch.
+
+Once the skeleton is generated, you can iteratively expand the plugin system, reporting, dashboards, and integrations into a polished enterprise-grade platform.

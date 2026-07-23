@@ -3,20 +3,29 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: SentinelX API specification
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: projects
+    description: Project management
+  - name: assets
+    description: Asset management
+  - name: findings
+    description: Vulnerability findings
+  - name: scans
+    description: Scan management
+  - name: dashboard
+    description: Dashboard and analytics
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +33,422 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /projects:
+    get:
+      operationId: listProjects
+      tags: [projects]
+      summary: List all projects
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+    post:
+      operationId: createProject
+      tags: [projects]
+      summary: Create a new project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectInput"
+      responses:
+        "201":
+          description: Created project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+
+  /projects/{id}:
+    get:
+      operationId: getProject
+      tags: [projects]
+      summary: Get a project by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateProject
+      tags: [projects]
+      summary: Update a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectUpdate"
+      responses:
+        "200":
+          description: Updated project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteProject
+      tags: [projects]
+      summary: Delete a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /projects/{projectId}/assets:
+    get:
+      operationId: listAssets
+      tags: [assets]
+      summary: List assets for a project
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Asset"
+    post:
+      operationId: createAsset
+      tags: [assets]
+      summary: Create an asset for a project
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetInput"
+      responses:
+        "201":
+          description: Created asset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+
+  /assets/{id}:
+    patch:
+      operationId: updateAsset
+      tags: [assets]
+      summary: Update an asset
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetUpdate"
+      responses:
+        "200":
+          description: Updated asset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteAsset
+      tags: [assets]
+      summary: Delete an asset
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /projects/{projectId}/findings:
+    get:
+      operationId: listFindings
+      tags: [findings]
+      summary: List findings for a project
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of findings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Finding"
+    post:
+      operationId: createFinding
+      tags: [findings]
+      summary: Create a finding for a project
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingInput"
+      responses:
+        "201":
+          description: Created finding
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Finding"
+
+  /findings/{id}:
+    get:
+      operationId: getFinding
+      tags: [findings]
+      summary: Get a finding by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Finding
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Finding"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateFinding
+      tags: [findings]
+      summary: Update a finding
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingUpdate"
+      responses:
+        "200":
+          description: Updated finding
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Finding"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteFinding
+      tags: [findings]
+      summary: Delete a finding
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /projects/{projectId}/scans:
+    get:
+      operationId: listScans
+      tags: [scans]
+      summary: List scans for a project
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of scans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Scan"
+    post:
+      operationId: createScan
+      tags: [scans]
+      summary: Create a scan for a project
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanInput"
+      responses:
+        "201":
+          description: Created scan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+
+  /scans/{id}:
+    get:
+      operationId: getScan
+      tags: [scans]
+      summary: Get a scan by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /dashboard/stats:
+    get:
+      operationId: getDashboardStats
+      tags: [dashboard]
+      summary: Get dashboard summary statistics
+      responses:
+        "200":
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+
+  /dashboard/activity:
+    get:
+      operationId: getDashboardActivity
+      tags: [dashboard]
+      summary: Get recent activity feed
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Activity feed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+
+  /dashboard/severity-breakdown:
+    get:
+      operationId: getSeverityBreakdown
+      tags: [dashboard]
+      summary: Get finding counts grouped by severity
+      responses:
+        "200":
+          description: Severity breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeverityBreakdown"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +459,321 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    Project:
+      type: object
+      required: [id, name, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        scope:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [active, paused, archived]
+        assetCount:
+          type: integer
+        findingCount:
+          type: integer
+        criticalCount:
+          type: integer
+        highCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ProjectInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        scope:
+          type: string
+        status:
+          type: string
+          enum: [active, paused, archived]
+          default: active
+
+    ProjectUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        scope:
+          type: string
+        status:
+          type: string
+          enum: [active, paused, archived]
+
+    Asset:
+      type: object
+      required: [id, projectId, value, type, status, createdAt]
+      properties:
+        id:
+          type: integer
+        projectId:
+          type: integer
+        value:
+          type: string
+        type:
+          type: string
+          enum: [domain, wildcard, ip_range, url, api]
+        status:
+          type: string
+          enum: [active, inactive, unknown]
+        notes:
+          type: ["string", "null"]
+        technologies:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    AssetInput:
+      type: object
+      required: [value, type]
+      properties:
+        value:
+          type: string
+          minLength: 1
+        type:
+          type: string
+          enum: [domain, wildcard, ip_range, url, api]
+        notes:
+          type: string
+        technologies:
+          type: array
+          items:
+            type: string
+
+    AssetUpdate:
+      type: object
+      properties:
+        value:
+          type: string
+        type:
+          type: string
+          enum: [domain, wildcard, ip_range, url, api]
+        status:
+          type: string
+          enum: [active, inactive, unknown]
+        notes:
+          type: string
+        technologies:
+          type: array
+          items:
+            type: string
+
+    Finding:
+      type: object
+      required: [id, projectId, title, severity, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        projectId:
+          type: integer
+        assetId:
+          type: ["integer", "null"]
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+        severity:
+          type: string
+          enum: [critical, high, medium, low, info]
+        status:
+          type: string
+          enum: [open, in_progress, resolved, wont_fix]
+        cvss:
+          type: ["number", "null"]
+        cve:
+          type: ["string", "null"]
+        evidence:
+          type: ["string", "null"]
+        remediation:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    FindingInput:
+      type: object
+      required: [title, severity]
+      properties:
+        title:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        severity:
+          type: string
+          enum: [critical, high, medium, low, info]
+        status:
+          type: string
+          enum: [open, in_progress, resolved, wont_fix]
+          default: open
+        assetId:
+          type: integer
+        cvss:
+          type: number
+        cve:
+          type: string
+        evidence:
+          type: string
+        remediation:
+          type: string
+
+    FindingUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        severity:
+          type: string
+          enum: [critical, high, medium, low, info]
+        status:
+          type: string
+          enum: [open, in_progress, resolved, wont_fix]
+        cvss:
+          type: number
+        cve:
+          type: string
+        evidence:
+          type: string
+        remediation:
+          type: string
+
+    Scan:
+      type: object
+      required: [id, projectId, name, status, createdAt]
+      properties:
+        id:
+          type: integer
+        projectId:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+          enum: [recon, enumeration, vulnerability, full]
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        findingsCount:
+          type: integer
+        startedAt:
+          type: ["string", "null"]
+          format: date-time
+        completedAt:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        logs:
+          type: ["string", "null"]
+
+    ScanInput:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        type:
+          type: string
+          enum: [recon, enumeration, vulnerability, full]
+
+    DashboardStats:
+      type: object
+      required: [totalProjects, activeProjects, totalAssets, totalFindings, openFindings, criticalFindings, highFindings, runningScans, completedScans]
+      properties:
+        totalProjects:
+          type: integer
+        activeProjects:
+          type: integer
+        totalAssets:
+          type: integer
+        totalFindings:
+          type: integer
+        openFindings:
+          type: integer
+        criticalFindings:
+          type: integer
+        highFindings:
+          type: integer
+        runningScans:
+          type: integer
+        completedScans:
+          type: integer
+
+    ActivityItem:
+      type: object
+      required: [id, type, title, description, createdAt]
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [finding_created, scan_completed, asset_added, project_created, finding_updated]
+        title:
+          type: string
+        description:
+          type: string
+        severity:
+          type: ["string", "null"]
+        projectId:
+          type: ["integer", "null"]
+        projectName:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+
+    SeverityBreakdown:
+      type: object
+      required: [critical, high, medium, low, info]
+      properties:
+        critical:
+          type: integer
+        high:
+          type: integer
+        medium:
+          type: integer
+        low:
+          type: integer
+        info:
+          type: integer
