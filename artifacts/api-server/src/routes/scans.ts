@@ -12,6 +12,80 @@ import {
 
 const router: IRouter = Router();
 
+// GET /scans — global scan history, including quick scans stored in temporary projects.
+// Logs and findings stay in the detail endpoints so this list remains lightweight.
+router.get("/scans", async (_req, res): Promise<void> => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+
+  const rows = await db
+    .select({
+      id: scansTable.id,
+      projectId: scansTable.projectId,
+      name: scansTable.name,
+      type: scansTable.type,
+      profile: scansTable.profile,
+      status: scansTable.status,
+      progress: scansTable.progress,
+      findingsCount: scansTable.findingsCount,
+      wafBlocked: scansTable.wafBlocked,
+      startedAt: scansTable.startedAt,
+      completedAt: scansTable.completedAt,
+      createdAt: scansTable.createdAt,
+      projectName: projectsTable.name,
+      target: assetsTable.value,
+    })
+    .from(scansTable)
+    .leftJoin(projectsTable, eq(scansTable.projectId, projectsTable.id))
+    .leftJoin(assetsTable, eq(scansTable.projectId, assetsTable.projectId))
+    .orderBy(desc(scansTable.createdAt));
+
+  const grouped = new Map<number, {
+    id: number;
+    projectId: number;
+    name: string;
+    type: string;
+    profile: string;
+    status: string;
+    progress: number;
+    findingsCount: number;
+    wafBlocked: boolean;
+    startedAt: Date | null;
+    completedAt: Date | null;
+    createdAt: Date;
+    projectName: string;
+    targets: Set<string>;
+  }>();
+
+  for (const row of rows) {
+    const current = grouped.get(row.id);
+    if (current) {
+      if (row.target) current.targets.add(row.target);
+      continue;
+    }
+    grouped.set(row.id, {
+      id: row.id,
+      projectId: row.projectId,
+      name: row.name,
+      type: row.type,
+      profile: row.profile,
+      status: row.status,
+      progress: row.progress,
+      findingsCount: row.findingsCount,
+      wafBlocked: row.wafBlocked,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+      createdAt: row.createdAt,
+      projectName: row.projectName ?? "Unassigned project",
+      targets: new Set(row.target ? [row.target] : []),
+    });
+  }
+
+  res.json([...grouped.values()].map(({ targets, ...scan }) => ({
+    ...scan,
+    target: [...targets].join(", ") || "Target not recorded",
+  })));
+});
+
 router.get("/projects/:projectId/scans", async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.projectId) ? req.params.projectId[0] : req.params.projectId;
   const params = ListScansParams.safeParse({ projectId: parseInt(raw, 10) });
@@ -100,6 +174,7 @@ router.get("/scans/:id", async (req, res): Promise<void> => {
 // GET /scans/:id/status — polling endpoint used by the quick-scan UI
 // Returns the scan record plus all findings discovered so far.
 router.get("/scans/:id/status", async (req, res): Promise<void> => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   if (isNaN(id)) {

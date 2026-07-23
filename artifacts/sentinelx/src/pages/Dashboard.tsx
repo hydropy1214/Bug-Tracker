@@ -14,7 +14,7 @@ type Phase = "idle" | "scanning" | "complete" | "error";
 
 interface Scan {
   id: number;
-  status: "pending" | "running" | "completed";
+  status: "pending" | "running" | "completed" | "failed";
   progress: number;
   logs: string | null;
   findingsCount: number;
@@ -50,6 +50,11 @@ interface Finding {
 interface ScanStatus {
   scan: Scan;
   findings: Finding[];
+}
+
+interface PersistedScan {
+  scanId: number;
+  target: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -262,6 +267,23 @@ export function Dashboard() {
     }
   }, [scanData?.scan?.logs]);
 
+  const applyScanStatus = useCallback((data: ScanStatus) => {
+    setScanData(data);
+    if (data.scan.status === "completed") {
+      window.localStorage.removeItem("sentinelx.activeScan");
+      setPhase("complete");
+      return false;
+    }
+    if (data.scan.status === "failed") {
+      window.localStorage.removeItem("sentinelx.activeScan");
+      setErrorMsg("The scan stopped unexpectedly. Start a new scan to retry.");
+      setPhase("error");
+      return false;
+    }
+    setPhase("scanning");
+    return true;
+  }, []);
+
   // Cleanup poll on unmount
   useEffect(() => {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
@@ -269,20 +291,48 @@ export function Dashboard() {
 
   const startPolling = useCallback((id: number) => {
     if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
+    let stopped = false;
+    const poll = async () => {
       try {
-        const res = await fetch(`/api/scans/${id}/status`);
-        if (!res.ok) return;
-        const data: ScanStatus = await res.json();
-        setScanData(data);
-        if (data.scan.status === "completed") {
-          setPhase("complete");
-          clearInterval(pollRef.current!);
-          pollRef.current = null;
+        const res = await fetch(`/api/scans/${id}/status`, { cache: "no-store" });
+        if (res.status === 404) {
+          window.localStorage.removeItem("sentinelx.activeScan");
+          setErrorMsg("This scan is no longer available.");
+          setPhase("error");
+          stopped = true;
+          return;
         }
-      } catch { /* retry next tick */ }
-    }, 1500);
-  }, []);
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const data: ScanStatus = await res.json();
+        const shouldContinue = applyScanStatus(data);
+        if (!shouldContinue) stopped = true;
+      } catch {
+        // Keep retrying while the API restarts or the network reconnects.
+      }
+      if (!stopped) {
+        pollRef.current = setTimeout(poll, 1200);
+      } else {
+        pollRef.current = null;
+      }
+    };
+    void poll();
+  }, [applyScanStatus]);
+
+  // Restore the scan that was running before a browser refresh.
+  useEffect(() => {
+    const raw = window.localStorage.getItem("sentinelx.activeScan");
+    if (!raw) return;
+    try {
+      const persisted = JSON.parse(raw) as PersistedScan;
+      if (!Number.isInteger(persisted.scanId) || !persisted.target) throw new Error("invalid scan state");
+      setScanId(persisted.scanId);
+      setTarget(persisted.target);
+      setUrl(persisted.target);
+      startPolling(persisted.scanId);
+    } catch {
+      window.localStorage.removeItem("sentinelx.activeScan");
+    }
+  }, [startPolling]);
 
   const startScan = async () => {
     const trimmed = url.trim();
@@ -308,6 +358,10 @@ export function Dashboard() {
       }
       const data = await res.json();
       setScanId(data.scanId);
+      window.localStorage.setItem("sentinelx.activeScan", JSON.stringify({
+        scanId: data.scanId,
+        target: normalized,
+      } satisfies PersistedScan));
       startPolling(data.scanId);
     } catch {
       setErrorMsg("Could not connect to the scan engine — is the API server running?");
@@ -323,6 +377,7 @@ export function Dashboard() {
     setErrorMsg(null);
     setUrl("");
     setTarget("");
+    window.localStorage.removeItem("sentinelx.activeScan");
     setTimeout(() => inputRef.current?.focus(), 50);
   };
 

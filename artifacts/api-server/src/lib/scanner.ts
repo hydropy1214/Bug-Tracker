@@ -203,6 +203,11 @@ export function remainingScanRequests(): number | null {
   return scanContext.getStore()?.remaining ?? null;
 }
 
+/** Stored authentication headers for auxiliary probe implementations. */
+export function getScanAuthHeaders(): Record<string, string> {
+  return scanContext.getStore()?.authHeaders ?? {};
+}
+
 /** Whether the current asset has been served a WAF challenge page. */
 export function isWafChallengeDetected(): boolean {
   return scanContext.getStore()?.wafChallengeDetected ?? false;
@@ -584,11 +589,14 @@ async function nmapScan(hostname: string, portRange: string, onLog: LogFn): Prom
         "--open",       // only show open ports
         "-T4",          // aggressive timing
         "--max-retries", "2",
-        "--host-timeout", "90s",
+        // Keep a complete requested port range, but do not let one filtered
+        // host monopolize the worker. Nmap still performs the full scan and
+        // returns partial results when this bounded host timeout is reached.
+        "--host-timeout", "45s",
         "-oG", "-",     // grepable output for parsing
         hostname,
       ],
-      { timeout: 120_000 },
+      { timeout: 60_000 },
     );
 
     const services: NmapService[] = [];
@@ -3129,6 +3137,8 @@ async function checkHttpRequestSmuggling(target: Target, onLog: LogFn): Promise<
   ];
 
   // Get baseline timing
+  if (!activeProbesAllowed()) return findings;
+  if (!reserveScanRequest()) return findings;
   const baselineStart = Date.now();
   const baselineR = await probe(target.url, { timeoutMs: 6_000 });
   const baselineMs = Date.now() - baselineStart;
@@ -3138,28 +3148,47 @@ async function checkHttpRequestSmuggling(target: Target, onLog: LogFn): Promise<
   }
 
   for (const { label, raw } of smugglingPayloads) {
+    if (!activeProbesAllowed() || !reserveScanRequest()) break;
     const result = await new Promise<{ status: number | null; durationMs: number; error?: string }>((resolve) => {
       const t0 = Date.now();
-      const opts = { host, port, rejectUnauthorized: false, timeout: 8000 };
-      const sock = (transport as typeof https).request ? (transport as typeof https).request(opts as any) : null;
-
+      let settled = false;
+      const finish = (value: { status: number | null; durationMs: number; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const authHeaderLines = Object.entries(getScanAuthHeaders())
+        .filter(([name, value]) => /^[\w-]+$/.test(name) && !/[\r\n]/.test(value))
+        .map(([name, value]) => `${name}: ${value}\r\n`)
+        .join("");
+      const requestWithAuth = raw.replace("\r\n", `\r\n${authHeaderLines}`);
       // Use raw socket for precise control
-      const socket = (u.protocol === "https:" ? require("tls") : require("net")).connect(
-        { host, port, rejectUnauthorized: false },
-        () => {
-          socket.write(raw);
-          socket.setTimeout(6000);
-        }
-      );
+      const socket = u.protocol === "https:"
+        ? tls.connect({ host, port, rejectUnauthorized: false })
+        : net.connect({ host, port });
+      const writeProbe = () => {
+        socket.write(requestWithAuth);
+        socket.setTimeout(6000);
+      };
+      socket.once(u.protocol === "https:" ? "secureConnect" : "connect", writeProbe);
       let received = "";
       socket.on("data", (d: Buffer) => { received += d.toString(); });
       socket.on("end",   () => {
         const statusMatch = received.match(/^HTTP\/[\d.]+ (\d+)/);
-        resolve({ status: statusMatch ? parseInt(statusMatch[1]!) : null, durationMs: Date.now() - t0 });
+        const responseHeaders: Record<string, string> = {};
+        for (const line of received.split("\r\n").slice(1)) {
+          const separator = line.indexOf(":");
+          if (separator > 0) responseHeaders[line.slice(0, separator).toLowerCase()] = line.slice(separator + 1).trim();
+        }
+        const status = statusMatch ? parseInt(statusMatch[1]!, 10) : null;
+        if (status !== null && isWafChallengeResponse(status, responseHeaders)) {
+          void noteWafChallengeDetected();
+        }
+        finish({ status, durationMs: Date.now() - t0 });
         socket.destroy();
       });
-      socket.on("timeout", () => { resolve({ status: null, durationMs: Date.now() - t0, error: "timeout" }); socket.destroy(); });
-      socket.on("error",   (e: Error) => { resolve({ status: null, durationMs: Date.now() - t0, error: e.message }); });
+      socket.on("timeout", () => { finish({ status: null, durationMs: Date.now() - t0, error: "timeout" }); socket.destroy(); });
+      socket.on("error",   (e: Error) => { finish({ status: null, durationMs: Date.now() - t0, error: e.message }); });
     });
 
     if (!result.status) continue;

@@ -11,6 +11,7 @@
 
 import {
   activeProbesAllowed,
+  getScanAuthHeaders,
   isContextualReflection,
   isWafChallengeResponse,
   noteWafChallengeDetected,
@@ -32,7 +33,11 @@ async function probe(
   try {
     const res = await fetch(url, {
       method: opts.method ?? "GET",
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; SentinelX/2.0; security-scanner)", ...(opts.headers ?? {}) },
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; SentinelX/2.0; security-scanner)",
+        ...getScanAuthHeaders(),
+        ...(opts.headers ?? {}),
+      },
       body: opts.body,
       signal: controller.signal,
       redirect: opts.followRedirects === false ? "manual" : "follow",

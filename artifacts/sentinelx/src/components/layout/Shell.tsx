@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { ShieldAlert, LayoutDashboard, Settings, Activity, Zap, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { ShieldAlert, LayoutDashboard, ListChecks, Settings, Activity, Zap, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useHealthCheck } from "@workspace/api-client-react";
 
@@ -72,6 +72,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
           )}>
             <LayoutDashboard className={cn("w-4 h-4 flex-shrink-0", location === "/" ? "text-primary" : "group-hover:text-foreground")} />
             {!collapsed && <span>Scan Engine</span>}
+          </Link>
+          <Link href="/scans" className={cn(
+            "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group",
+            location === "/scans" ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+          )}>
+            <ListChecks className={cn("w-4 h-4 flex-shrink-0", location === "/scans" ? "text-primary" : "group-hover:text-foreground")} />
+            {!collapsed && <span>All Scans</span>}
           </Link>
         </nav>
 

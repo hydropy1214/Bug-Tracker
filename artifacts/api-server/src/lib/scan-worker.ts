@@ -19,7 +19,8 @@ import { discoverToolCapabilities, resolveScanPolicy, scanTarget, type ScanType 
 import { decryptAuthHeaders } from "./auth-context";
 import { logger } from "./logger";
 
-const TICK_MS = 3_000; // how often we check for new pending scans
+const TICK_MS = 2_000; // keep the queue responsive without busy-polling the database
+const SCANNER_PHASE_COUNT = 23;
 
 // Track scans currently being processed to avoid double-pickup
 const activeScans = new Set<number>();
@@ -78,7 +79,9 @@ async function appendLog(scanId: number, line: string): Promise<void> {
 async function setProgress(scanId: number, progress: number): Promise<void> {
   await db
     .update(scansTable)
-    .set({ progress: Math.min(progress, 100) })
+    .set({
+      progress: sql`GREATEST(COALESCE(${scansTable.progress}, 0), ${Math.min(progress, 100)})`,
+    })
     .where(eq(scansTable.id, scanId));
 }
 
@@ -93,6 +96,12 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
   const policy = resolveScanPolicy(scan.profile);
   const capabilities = await discoverToolCapabilities();
   const capabilityJson = JSON.stringify(capabilities);
+  const wasInterrupted = Boolean(scan.startedAt);
+
+  if (wasInterrupted) {
+    await db.delete(findingsTable).where(eq(findingsTable.scanId, scan.id));
+    await appendLog(scan.id, `[${new Date().toISOString()}] Previous worker stopped during this scan; restarting safely from the beginning.`);
+  }
 
   // Mark running
   await db
@@ -101,8 +110,11 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
       status: "running",
       progress: 0,
       startedAt: new Date(),
-      logs: "",
+      logs: wasInterrupted
+        ? sql`COALESCE(${scansTable.logs}, '')`
+        : "",
       wafBlocked: false,
+      findingsCount: 0,
       policy: JSON.stringify(policy),
       toolCapabilities: capabilityJson,
     })
@@ -166,10 +178,26 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
       scan.type as ScanType,
       async (msg) => {
         await log(msg);
-        // Advance UI progress as the scanner streams log lines
+        // Scanner logs carry the authoritative phase number. Use it for
+        // progress so long-running phases (notably nmap) do not look frozen.
+        const phaseMatch = msg.match(/\[Phase\s+(\d+)(?:[a-z])?\]/i);
+        if (phaseMatch) {
+          const scannerPhase = Number.parseInt(phaseMatch[1]!, 10);
+          if (Number.isFinite(scannerPhase)) {
+            currentPhase = Math.max(currentPhase, Math.min(scannerPhase, SCANNER_PHASE_COUNT));
+            await setProgress(
+              scan.id,
+              Math.max(1, Math.min(94, Math.round((currentPhase / SCANNER_PHASE_COUNT) * 95))),
+            );
+            return;
+          }
+        }
+
+        // Keep a small amount of movement inside the current phase without
+        // regressing when multiple log lines arrive out of order.
         const phaseIdx = Math.min(currentPhase, totalPhases - 2);
         const subProgress = Math.round(((phaseIdx + 0.5) / totalPhases) * 95);
-        await setProgress(scan.id, subProgress);
+        await setProgress(scan.id, Math.max(1, subProgress));
       },
       policy,
       authHeaders,
@@ -270,13 +298,12 @@ async function pickUpPendingScans(): Promise<void> {
     processScan(scan)
       .catch((err) => {
         logger.error({ scanId: scan.id, err }, "Scan failed");
-        // Mark the scan as failed so it doesn't stay stuck as "pending"
+        // Mark the scan as failed so the dashboard can explain what happened
         db.update(scansTable)
           .set({
-            status: "completed",
-            progress: 100,
+            status: "failed",
             completedAt: new Date(),
-            logs: `Scan encountered an error: ${err?.message ?? String(err)}\n`,
+            logs: sql`COALESCE(${scansTable.logs}, '') || ${`[${new Date().toISOString()}] Scan failed: ${err?.message ?? String(err)}\n`}`,
           })
           .where(eq(scansTable.id, scan.id))
           .catch(() => {});
@@ -287,9 +314,40 @@ async function pickUpPendingScans(): Promise<void> {
   }
 }
 
+async function recoverInterruptedScans(): Promise<void> {
+  const interrupted = await db
+    .select({ id: scansTable.id })
+    .from(scansTable)
+    .where(eq(scansTable.status, "running"));
+
+  for (const scan of interrupted) {
+    await db.delete(findingsTable).where(eq(findingsTable.scanId, scan.id));
+    await db
+      .update(scansTable)
+      .set({
+        status: "pending",
+        progress: 0,
+        completedAt: null,
+        wafBlocked: false,
+        logs: sql`COALESCE(${scansTable.logs}, '') || ${`[${new Date().toISOString()}] API worker restarted; scan queued for safe recovery.\n`}`,
+      })
+      .where(eq(scansTable.id, scan.id));
+    logger.warn({ scanId: scan.id }, "Recovered interrupted scan");
+  }
+}
+
 export function startScanWorker(): void {
   logger.info("Scan worker started (real HTTP scanner active)");
+  let ready = false;
+  void recoverInterruptedScans()
+    .then(() => {
+      ready = true;
+      return pickUpPendingScans();
+    })
+    .catch((err) => logger.error({ err }, "Scan recovery failed"));
+
   setInterval(() => {
+    if (!ready) return;
     pickUpPendingScans().catch((err) =>
       logger.error({ err }, "Scan worker loop error"),
     );
