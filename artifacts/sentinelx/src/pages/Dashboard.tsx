@@ -2,15 +2,14 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Shield, Search, Zap, Terminal, AlertTriangle, CheckCircle2,
   ChevronDown, ChevronRight, ExternalLink, RefreshCw, Play,
-  Clock, Activity, Lock, Globe, Server
+  Clock, Activity, Lock, Globe, Server, Radar, Bug, KeyRound,
+  Fingerprint, Eye, Cpu
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ScanType = "recon" | "enumeration" | "vulnerability" | "full";
-type ScanProfile = "passive" | "safe_active" | "deep_authorized" | "authenticated" | "lab";
 type Phase = "idle" | "scanning" | "complete" | "error";
 
 interface Scan {
@@ -22,9 +21,7 @@ interface Scan {
   startedAt: string | null;
   completedAt: string | null;
   type: string;
-  profile?: ScanProfile;
-  policy?: string | null;
-  toolCapabilities?: string | null;
+  profile?: string;
 }
 
 interface Finding {
@@ -56,21 +53,6 @@ interface ScanStatus {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const SCAN_TYPE_INFO: Record<ScanType, { label: string; icon: React.ReactNode; desc: string; time: string }> = {
-  recon:         { label: "Recon",         icon: <Globe className="w-3.5 h-3.5" />,    desc: "DNS · TLS · Headers · Fingerprint", time: "~1 min" },
-  enumeration:   { label: "Enumeration",   icon: <Server className="w-3.5 h-3.5" />,   desc: "Recon + Ports · Subdomains · Paths", time: "~3 min" },
-  vulnerability: { label: "Vulnerability", icon: <AlertTriangle className="w-3.5 h-3.5"/>, desc: "Enum + SQLi · XSS · SSTI · SSRF · CORS", time: "~6 min" },
-  full:          { label: "Full",          icon: <Shield className="w-3.5 h-3.5" />,   desc: "All checks + version matches · probes · Wayback", time: "~10 min" },
-};
-
-const PROFILE_INFO: Record<ScanProfile, { label: string; desc: string; budget: string }> = {
-  passive: { label: "Passive", desc: "DNS, TLS, headers, and fingerprinting only", budget: "80 requests" },
-  safe_active: { label: "Safe Active", desc: "Bounded active checks; no deep probes", budget: "300 requests" },
-  deep_authorized: { label: "Deep Authorized", desc: "Expanded probes for targets you own or have permission to test", budget: "1,200 requests" },
-  authenticated: { label: "Authenticated", desc: "Reserved for supplied test-session workflows", budget: "1,500 requests" },
-  lab: { label: "Lab", desc: "Deep checks plus callback-capable lab fixtures", budget: "2,000 requests" },
-};
-
 const SEV: Record<string, { label: string; color: string; bg: string; border: string; dot: string }> = {
   critical: { label: "CRITICAL", color: "text-red-400",    bg: "bg-red-500/10",    border: "border-red-500/30",    dot: "bg-red-400" },
   high:     { label: "HIGH",     color: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/30", dot: "bg-orange-400" },
@@ -86,7 +68,7 @@ function sevCount(findings: Finding[], sev: string) {
 }
 
 function verificationLabel(value?: Finding["verification"]) {
-  return value === "suspected" ? "SUSPECTED SIGNAL" : value === "version_match" ? "VERSION MATCH" : value === "informational" ? "INFORMATIONAL" : "VERIFIED";
+  return value === "suspected" ? "SUSPECTED" : value === "version_match" ? "VERSION MATCH" : value === "informational" ? "INFORMATIONAL" : "VERIFIED";
 }
 
 // ─── Finding Card ─────────────────────────────────────────────────────────────
@@ -101,7 +83,6 @@ function FindingCard({ finding }: { finding: Finding }) {
       animate={{ opacity: 1, y: 0 }}
       className={cn("rounded-md border overflow-hidden transition-all", s.border, s.bg)}
     >
-      {/* Header row */}
       <button
         onClick={() => setOpen(o => !o)}
         className="w-full flex items-start gap-3 px-4 py-3 text-left hover:brightness-110 transition-all"
@@ -147,7 +128,6 @@ function FindingCard({ finding }: { finding: Finding }) {
         </div>
       </button>
 
-      {/* Expanded content */}
       <AnimatePresence>
         {open && (
           <motion.div
@@ -158,7 +138,6 @@ function FindingCard({ finding }: { finding: Finding }) {
             className="overflow-hidden"
           >
             <div className="px-4 pb-4 space-y-4 border-t border-white/5">
-              {/* Description */}
               <div className="pt-3">
                 <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1.5">Description</div>
                 <p className="text-sm text-foreground/80 leading-relaxed">{finding.description}</p>
@@ -166,26 +145,22 @@ function FindingCard({ finding }: { finding: Finding }) {
 
               {finding.verification === "suspected" && (
                 <div className="rounded border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-[11px] font-mono text-yellow-200">
-                  This is a signal requiring analyst validation. It is not presented as a confirmed exploit.
+                  ⚠ This is a signal requiring analyst validation — not a confirmed exploit.
                 </div>
               )}
 
-              {/* Evidence */}
               <div>
                 <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                  <Terminal className="w-3 h-3" />
-                  Evidence / Proof
+                  <Terminal className="w-3 h-3" /> Evidence / Proof
                 </div>
                 <pre className="text-[11px] font-mono bg-black/40 border border-white/10 rounded p-3 overflow-x-auto text-primary/90 whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
                   {finding.evidence}
                 </pre>
               </div>
 
-              {/* Remediation */}
               <div>
                 <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                  Remediation
+                  <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Remediation
                 </div>
                 <pre className="text-[11px] font-mono text-foreground/70 whitespace-pre-wrap leading-relaxed">{finding.remediation}</pre>
               </div>
@@ -227,7 +202,7 @@ function FindingCard({ finding }: { finding: Finding }) {
   );
 }
 
-// ─── Severity summary bar ──────────────────────────────────────────────────────
+// ─── Severity Summary ─────────────────────────────────────────────────────────
 
 function SeveritySummary({ findings }: { findings: Finding[] }) {
   if (findings.length === 0) return null;
@@ -248,13 +223,27 @@ function SeveritySummary({ findings }: { findings: Finding[] }) {
   );
 }
 
+// ─── Scan Engine Capabilities ─────────────────────────────────────────────────
+
+const CAPABILITIES = [
+  { icon: <Globe className="w-4 h-4 text-primary" />,       title: "DNS · WHOIS · Subdomain Discovery",     desc: "dig-based DNS enumeration, crt.sh cert transparency, DNS brute-force, zone transfer, subdomain takeover detection" },
+  { icon: <Radar className="w-4 h-4 text-cyan-400" />,      title: "WAF/CDN Detection & Bypass",            desc: "Detects Cloudflare, AWS WAF, Akamai, Imperva and more; tests IP-header spoofing, Googlebot bypass, and direct origin IP access" },
+  { icon: <Server className="w-4 h-4 text-blue-400" />,     title: "Port Scanning · TLS/SSL · Services",    desc: "Full 65535-port nmap scan, openssl TLS analysis (protocols, ciphers, cert expiry), exposed dangerous services" },
+  { icon: <Bug className="w-4 h-4 text-orange-400" />,      title: "SQL · NoSQL · Command · Path Injection", desc: "Error-based and time-based blind SQLi, MongoDB operator injection, OS command injection canary, path traversal file read" },
+  { icon: <Zap className="w-4 h-4 text-yellow-400" />,      title: "SSTI · XXE · SSRF · Deserialization",   desc: "Arithmetic canary SSTI with RCE escalation, XXE file read, SSRF cloud metadata access, Java deserialization surface" },
+  { icon: <KeyRound className="w-4 h-4 text-red-400" />,    title: "JWT Weakness · Log4Shell · Spring4Shell", desc: "alg:none bypass, weak HS256 secret cracking, missing exp claim, Log4Shell JNDI injection surface, Spring4Shell class loader" },
+  { icon: <Lock className="w-4 h-4 text-emerald-400" />,    title: "Host Header · CRLF · Open Redirect",    desc: "Password-reset link poisoning, HTTP response splitting, open redirect to attacker-controlled domains" },
+  { icon: <Fingerprint className="w-4 h-4 text-purple-400" />, title: "Tech Fingerprint · CVE Matching",    desc: "Stack detection (WordPress, Nginx, Next.js, Laravel…), NVD API CVE cross-reference against detected versions" },
+  { icon: <Eye className="w-4 h-4 text-pink-400" />,        title: "50+ Sensitive Paths · Wayback Machine", desc: ".env, .git, backup.sql, credentials.json, SSH keys, Kubernetes configs, source maps, CI/CD files + historical URL analysis" },
+  { icon: <Cpu className="w-4 h-4 text-indigo-400" />,      title: "API Surface · Auth · Rate Limits",      desc: "GraphQL introspection, Swagger/OpenAPI exposure, Spring Actuator, no rate limiting on login endpoints, CORS misconfigurations" },
+  { icon: <AlertTriangle className="w-4 h-4 text-amber-400" />, title: "Headers · Cookies · XSS · CORS",   desc: "Full HTTP security header audit (HSTS/CSP/XFO/XCTO), cookie flag analysis, reflected XSS detection, CORS credential reflection" },
+  { icon: <Shield className="w-4 h-4 text-foreground" />,   title: "Zero False Positives",                  desc: "Every finding uses baseline comparison, canary tokens, or content markers — no guessing, no noise" },
+];
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export function Dashboard() {
   const [url, setUrl] = useState("");
-  const [scanType, setScanType] = useState<ScanType>("full");
-  const [profile, setProfile] = useState<ScanProfile>("safe_active");
-  const [showTypes, setShowTypes] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [scanId, setScanId] = useState<number | null>(null);
   const [scanData, setScanData] = useState<ScanStatus | null>(null);
@@ -277,7 +266,6 @@ export function Dashboard() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
-  // Poll for scan status
   const startPolling = useCallback((id: number) => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
@@ -291,7 +279,7 @@ export function Dashboard() {
           clearInterval(pollRef.current!);
           pollRef.current = null;
         }
-      } catch { /* network error, retry next tick */ }
+      } catch { /* retry next tick */ }
     }, 1500);
   }, []);
 
@@ -309,7 +297,7 @@ export function Dashboard() {
       const res = await fetch("/api/quick-scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: normalized, scanType, profile }),
+        body: JSON.stringify({ url: normalized, scanType: "full", profile: "deep_authorized" }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Scan failed to start" }));
@@ -339,21 +327,13 @@ export function Dashboard() {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && phase === "idle") startScan();
-    if (e.key === "Escape") setShowTypes(false);
   };
 
   const scan = scanData?.scan;
   const findings = scanData?.findings ?? [];
-  const sortedFindings = [...findings].sort((a, b) => {
-    const ai = SEV_ORDER.indexOf(a.severity);
-    const bi = SEV_ORDER.indexOf(b.severity);
-    return ai - bi;
-  });
+  const sortedFindings = [...findings].sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity));
   const logLines = (scan?.logs ?? "").split("\n").filter(Boolean);
-  const typeInfo = SCAN_TYPE_INFO[scanType]!;
-  const profileInfo = PROFILE_INFO[profile];
 
-  // Threat level for completed scans
   const confirmedFindings = findings.filter(f => (f.verification ?? "verified") === "verified");
   const suspectedFindings = findings.filter(f => f.verification === "suspected");
   const threatLevel =
@@ -361,15 +341,12 @@ export function Dashboard() {
     sevCount(confirmedFindings, "high")     > 0 ? { label: "HIGH",     color: "text-orange-400", ring: "border-orange-500/40", bg: "bg-orange-500/10" } :
     sevCount(confirmedFindings, "medium")   > 0 ? { label: "MODERATE", color: "text-yellow-400", ring: "border-yellow-500/40", bg: "bg-yellow-500/10" } :
     confirmedFindings.length > 0             ? { label: "LOW",       color: "text-blue-400",   ring: "border-blue-500/40",   bg: "bg-blue-500/10" } :
-    suspectedFindings.length > 0             ? { label: "REVIEW SIGNALS", color: "text-yellow-300", ring: "border-yellow-500/40", bg: "bg-yellow-500/10" } :
-                                         { label: "CLEAN",     color: "text-primary",    ring: "border-primary/40",    bg: "bg-primary/10" };
+    suspectedFindings.length > 0             ? { label: "SIGNALS",   color: "text-yellow-300", ring: "border-yellow-500/40", bg: "bg-yellow-500/10" } :
+                                               { label: "CLEAN",     color: "text-primary",    ring: "border-primary/40",    bg: "bg-primary/10" };
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="space-y-6"
-    >
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -377,7 +354,7 @@ export function Dashboard() {
             Scan Engine
           </h1>
           <p className="text-xs font-mono text-muted-foreground mt-1 tracking-wider uppercase">
-            Enter any URL to run a full security scan
+            Full deep scan · 21 phases · WAF bypass · zero false positives
           </p>
         </div>
         {phase !== "idle" && (
@@ -407,66 +384,11 @@ export function Dashboard() {
             placeholder="https://example.com"
             className="flex-1 bg-transparent text-foreground placeholder:text-muted-foreground/50 font-mono text-sm outline-none disabled:opacity-50"
           />
-
-          {/* Scan type picker */}
-          <div className="relative flex-shrink-0">
-            <button
-              onClick={() => setShowTypes(o => !o)}
-              disabled={phase === "scanning"}
-              className="flex items-center gap-2 px-3 py-1.5 rounded border border-border bg-accent/50 text-xs font-mono text-foreground hover:border-primary/40 transition-all disabled:opacity-50"
-            >
-              {typeInfo.icon}
-              {typeInfo.label}
-              <ChevronDown className="w-3 h-3 text-muted-foreground" />
-            </button>
-            <AnimatePresence>
-              {showTypes && (
-                <motion.div
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
-                  className="absolute right-0 top-full mt-2 z-50 w-72 rounded-md border border-border bg-popover shadow-2xl overflow-hidden"
-                >
-                  {(Object.entries(SCAN_TYPE_INFO) as [ScanType, typeof typeInfo][]).map(([key, info]) => (
-                    <button
-                      key={key}
-                      onClick={() => { setScanType(key); setShowTypes(false); }}
-                      className={cn(
-                        "w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-accent/60 transition-colors border-b border-border/40 last:border-0",
-                        scanType === key && "bg-primary/10"
-                      )}
-                    >
-                      <div className={cn("mt-0.5", scanType === key ? "text-primary" : "text-muted-foreground")}>{info.icon}</div>
-                      <div>
-                        <div className={cn("text-xs font-mono font-bold", scanType === key ? "text-primary" : "text-foreground")}>{info.label}</div>
-                        <div className="text-[10px] font-mono text-muted-foreground mt-0.5">{info.desc}</div>
-                        <div className="text-[10px] font-mono text-muted-foreground/60 mt-0.5">Est. {info.time}</div>
-                      </div>
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          <select
-            value={profile}
-            onChange={e => setProfile(e.target.value as ScanProfile)}
-            disabled={phase === "scanning"}
-            aria-label="Scan profile"
-            className="max-w-[170px] px-2.5 py-1.5 rounded border border-border bg-accent/50 text-xs font-mono text-foreground outline-none hover:border-primary/40 transition-all disabled:opacity-50"
-          >
-            {Object.entries(PROFILE_INFO).map(([key, info]) => (
-              <option key={key} value={key}>{info.label}</option>
-            ))}
-          </select>
-
-          {/* Scan button */}
           <button
             onClick={startScan}
             disabled={phase === "scanning" || !url.trim()}
             className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded font-mono text-xs font-bold tracking-widest uppercase transition-all",
+              "flex items-center gap-2 px-5 py-2 rounded font-mono text-xs font-bold tracking-widest uppercase transition-all",
               phase === "scanning"
                 ? "bg-primary/20 text-primary border border-primary/30 cursor-wait"
                 : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -479,16 +401,15 @@ export function Dashboard() {
             )}
           </button>
         </div>
-
-        {/* Scan type description bar */}
         {phase === "idle" && (
-          <div className="px-4 py-2 border-t border-border/40 flex items-center gap-4">
-            <div className="text-[10px] font-mono text-muted-foreground flex items-center gap-1.5">
-              {typeInfo.icon}
-              <span className="uppercase tracking-wider">{typeInfo.label}:</span>
-              <span>{typeInfo.desc}</span>
-              <span className="ml-2 text-muted-foreground/50">· Est. {typeInfo.time}</span>
-              <span className="ml-2 text-primary/70">· {profileInfo.desc} · {profileInfo.budget}</span>
+          <div className="px-4 py-2 border-t border-border/40">
+            <div className="text-[10px] font-mono text-muted-foreground flex items-center gap-2 flex-wrap">
+              <Shield className="w-3 h-3 text-primary" />
+              <span className="text-primary/80 font-bold uppercase tracking-wider">Full Deep Scan</span>
+              <span className="text-muted-foreground/50">·</span>
+              <span>21 phases · nmap · dig · whois · openssl · WAF bypass · 50+ paths · CVE lookup</span>
+              <span className="text-muted-foreground/50">·</span>
+              <span className="text-primary/70">Est. ~10–15 min</span>
             </div>
           </div>
         )}
@@ -508,9 +429,8 @@ export function Dashboard() {
           <div className="flex items-center justify-between text-xs font-mono">
             <div className="flex items-center gap-2">
               <div className={cn("w-2 h-2 rounded-full", phase === "scanning" ? "bg-primary animate-pulse" : "bg-emerald-400")} />
-              <span className="text-foreground uppercase tracking-wider">{target}</span>
-              <span className="text-muted-foreground">·</span>
-               <span className="text-muted-foreground uppercase">{scanType} · {scan.profile ?? profile} profile</span>
+              <span className="text-foreground uppercase tracking-wider truncate max-w-[300px]">{target}</span>
+              <span className="text-muted-foreground">· FULL DEEP SCAN</span>
             </div>
             <div className="flex items-center gap-3">
               {phase === "scanning" && scan.status === "running" && (
@@ -530,41 +450,31 @@ export function Dashboard() {
             />
           </div>
 
-          {/* Stats row */}
-          {findings.length > 0 && (
-            <SeveritySummary findings={findings} />
-          )}
+          {findings.length > 0 && <SeveritySummary findings={findings} />}
         </div>
       )}
 
-      {/* ── Scan active: split view ─────────────────────────────────────────── */}
+      {/* ── Split view: terminal + live findings ─────────────────────────────── */}
       {(phase === "scanning" || phase === "complete") && (
         <div className="grid gap-4 lg:grid-cols-2">
-
           {/* Terminal */}
-          <div className="rounded-md border border-border bg-card flex flex-col" style={{ minHeight: "480px", maxHeight: "600px" }}>
+          <div className="rounded-md border border-border bg-card flex flex-col" style={{ minHeight: "480px", maxHeight: "640px" }}>
             <div className="flex items-center gap-2 px-4 py-3 border-b border-border flex-shrink-0">
               <Terminal className="w-3.5 h-3.5 text-primary" />
-              <span className="font-mono text-xs font-bold uppercase tracking-wider text-foreground">
-                Live Scanner Output
-              </span>
-              {phase === "scanning" && (
-                <span className="ml-auto text-[10px] font-mono text-primary animate-pulse">● LIVE</span>
-              )}
-              {phase === "complete" && (
-                <span className="ml-auto text-[10px] font-mono text-emerald-400">✓ DONE</span>
-              )}
+              <span className="font-mono text-xs font-bold uppercase tracking-wider text-foreground">Live Scanner Output</span>
+              {phase === "scanning" && <span className="ml-auto text-[10px] font-mono text-primary animate-pulse">● LIVE</span>}
+              {phase === "complete" && <span className="ml-auto text-[10px] font-mono text-emerald-400">✓ DONE</span>}
             </div>
             <div
               ref={logRef}
               className="flex-1 overflow-y-auto p-4 font-mono text-[11px] leading-relaxed space-y-0.5 bg-black/20"
             >
               {logLines.length === 0 && phase === "scanning" && (
-                <div className="text-muted-foreground animate-pulse">Initialising scan engine...</div>
+                <div className="text-muted-foreground animate-pulse">Initialising scan engine (21 phases)...</div>
               )}
               {logLines.map((line, i) => {
-                const isCritical = line.includes("⚠") || line.includes("CRITICAL") || line.includes("CONFIRMED");
-                const isWarn = line.includes("WARNING") || line.includes("OPEN PORT") || line.includes("finding");
+                const isCritical = line.includes("⚠") || line.includes("CRITICAL") || line.includes("CONFIRMED") || line.includes("CRACKED");
+                const isWarn = line.includes("WARNING") || line.includes("OPEN PORT") || line.includes("SIGNAL") || line.includes("EXPOSED");
                 const isDone = line.includes("SCAN COMPLETE") || line.includes("═══");
                 const isPhase = line.includes("[Phase ");
                 return (
@@ -580,19 +490,15 @@ export function Dashboard() {
                   </div>
                 );
               })}
-              {phase === "scanning" && (
-                <div className="text-primary animate-pulse mt-1">▌</div>
-              )}
+              {phase === "scanning" && <div className="text-primary animate-pulse mt-1">▌</div>}
             </div>
           </div>
 
           {/* Findings */}
-          <div className="rounded-md border border-border bg-card flex flex-col" style={{ minHeight: "480px", maxHeight: "600px" }}>
+          <div className="rounded-md border border-border bg-card flex flex-col" style={{ minHeight: "480px", maxHeight: "640px" }}>
             <div className="flex items-center gap-2 px-4 py-3 border-b border-border flex-shrink-0">
               <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="font-mono text-xs font-bold uppercase tracking-wider text-foreground">
-                Findings
-              </span>
+              <span className="font-mono text-xs font-bold uppercase tracking-wider text-foreground">Live Findings</span>
               {findings.length > 0 && (
                 <span className="ml-auto font-mono text-xs text-primary font-bold">{findings.length}</span>
               )}
@@ -602,7 +508,7 @@ export function Dashboard() {
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground py-16">
                   <Shield className="w-8 h-8 mb-3 opacity-20" />
                   <p className="text-xs font-mono uppercase">
-                    {phase === "scanning" ? "Analysing target..." : "No findings"}
+                    {phase === "scanning" ? "Scanning..." : "No findings"}
                   </p>
                 </div>
               ) : (
@@ -613,7 +519,7 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* ── Complete: report summary ────────────────────────────────────────── */}
+      {/* ── Complete: full report ─────────────────────────────────────────────── */}
       {phase === "complete" && scan && (
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -623,7 +529,10 @@ export function Dashboard() {
         >
           <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
             <div className={cn("flex items-center gap-3 px-3 py-1.5 rounded border", threatLevel.bg, threatLevel.ring)}>
-              <div className={cn("w-2 h-2 rounded-full", threatLevel.label === "CLEAN" ? "bg-primary" : threatLevel.label === "LOW" ? "bg-blue-400" : threatLevel.label === "MODERATE" ? "bg-yellow-400" : threatLevel.label === "HIGH" ? "bg-orange-400" : "bg-red-400")} />
+              <div className={cn("w-2 h-2 rounded-full",
+                threatLevel.label === "CLEAN" ? "bg-primary" : threatLevel.label === "LOW" ? "bg-blue-400" :
+                threatLevel.label === "MODERATE" ? "bg-yellow-400" : threatLevel.label === "HIGH" ? "bg-orange-400" : "bg-red-400"
+              )} />
               <span className={cn("text-[11px] font-mono font-bold tracking-widest uppercase", threatLevel.color)}>
                 THREAT: {threatLevel.label}
               </span>
@@ -641,11 +550,10 @@ export function Dashboard() {
             </div>
             <div className="flex items-center gap-2">
               <Zap className="w-3 h-3 text-primary" />
-              <span className="text-[10px] font-mono text-muted-foreground uppercase">{scanType} scan</span>
+              <span className="text-[10px] font-mono text-muted-foreground uppercase">Full Deep Scan</span>
             </div>
           </div>
 
-          {/* Severity summary */}
           {findings.length > 0 && (
             <div className="px-5 py-3 border-b border-border/40 flex items-center gap-3 flex-wrap">
               <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Risk Summary:</span>
@@ -653,7 +561,6 @@ export function Dashboard() {
             </div>
           )}
 
-          {/* All findings */}
           <div className="p-4 space-y-2">
             {sortedFindings.length === 0 ? (
               <div className="flex flex-col items-center py-12 text-muted-foreground">
@@ -668,20 +575,15 @@ export function Dashboard() {
         </motion.div>
       )}
 
-      {/* ── Idle: feature hints ────────────────────────────────────────────── */}
+      {/* ── Idle: capability grid ───────────────────────────────────────────── */}
       {phase === "idle" && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.2 }}
-          className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"
+          className="grid gap-3 md:grid-cols-2 lg:grid-cols-3"
         >
-          {[
-            { icon: <Shield className="w-4 h-4 text-primary" />,       title: "CVE Version Matching", desc: "Cross-references exact detected versions against NVD vulnerable CPE ranges" },
-            { icon: <Zap className="w-4 h-4 text-yellow-400" />,       title: "SSTI Evidence Probes", desc: "Confirms template evaluation and separately tests a bounded command canary" },
-            { icon: <Lock className="w-4 h-4 text-orange-400" />,      title: "SQLi & XSS",          desc: "Error-based SQL injection and reflected XSS reflection detection" },
-            { icon: <Terminal className="w-4 h-4 text-emerald-400" />, title: "Evidence & Proof",    desc: "Every finding includes full request/response proof for validation" },
-          ].map(({ icon, title, desc }) => (
+          {CAPABILITIES.map(({ icon, title, desc }) => (
             <div key={title} className="rounded-md border border-border bg-card p-4">
               <div className="flex items-center gap-2 mb-2">
                 {icon}

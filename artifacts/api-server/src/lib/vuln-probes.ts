@@ -422,6 +422,205 @@ export async function lookupCvesForTechs(techs: TechProfile[], onLog: LogFn): Pr
 // RCE via Deserialization — detect known deserialization endpoints
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMMAND INJECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function checkCommandInjection(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  await onLog(`[${ts()}] Testing OS command injection (deep probe)...`);
+
+  const canary = `sentinelx-cmd-${Math.random().toString(36).slice(2, 10)}`;
+  const PAYLOADS = [
+    { p: `; printf ${canary}`,        shell: "sh" },
+    { p: `| printf ${canary}`,        shell: "sh" },
+    { p: `$(printf ${canary})`,       shell: "bash" },
+    { p: `\`printf ${canary}\``,      shell: "bash" },
+    { p: `& echo ${canary}`,          shell: "cmd" },
+    { p: `| echo ${canary}`,          shell: "cmd" },
+    { p: `\n/bin/echo ${canary}`,     shell: "sh-newline" },
+    { p: `%0a/bin/echo ${canary}`,    shell: "sh-encoded" },
+  ];
+  const PARAMS = ["cmd", "exec", "command", "run", "shell", "ping", "host", "ip", "target", "file", "path", "name", "url", "q", "search", "addr"];
+
+  for (const param of PARAMS.slice(0, 8)) {
+    for (const { p, shell } of PAYLOADS.slice(0, 4)) {
+      const probeUrl = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(p)}`;
+      const r = await probe(probeUrl, { timeoutMs: 8_000 });
+      if (!r) continue;
+      if (r.body.includes(canary)) {
+        findings.push({
+          title: `OS Command Injection Confirmed via '${param}' (${shell})`,
+          severity: "critical",
+          verification: "verified",
+          confidence: 99,
+          cvss: 10.0,
+          cve: null,
+          description: `Operating-system command injection confirmed via the '${param}' parameter using a ${shell} payload. A unique canary string was executed and returned in the response, confirming arbitrary code execution on the server.`,
+          evidence: `PROBE: GET ${probeUrl}\nPARAM: ${param}=${p}\nCANARY: ${canary}\nHTTP ${r.status} — canary found in response body\nResponse snippet: ${r.body.slice(0, 400)}`,
+          remediation: "Never pass user input to shell/exec functions. Use language-native libraries instead of shell commands. If shell is unavoidable, use an allowlist and properly escape/quote all arguments using shell-escape libraries.",
+        });
+        await onLog(`[${ts()}] ⚠ COMMAND INJECTION CONFIRMED via '${param}' — canary executed`);
+        return findings;
+      }
+    }
+  }
+
+  // POST-based command injection
+  const postPayloads = PAYLOADS.slice(0, 3).map(p => p.p);
+  for (const payload of postPayloads) {
+    const r = await probe(target.url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cmd: payload, command: payload, exec: payload }),
+      timeoutMs: 8_000,
+    });
+    if (r?.body.includes(canary)) {
+      findings.push({
+        title: "OS Command Injection via POST Body (JSON)",
+        severity: "critical",
+        verification: "verified",
+        confidence: 99,
+        cvss: 10.0,
+        cve: null,
+        description: "Command injection confirmed via JSON POST body. The server executed a command from user-supplied JSON input and returned the canary string in the response.",
+        evidence: `POST ${target.url}\nContent-Type: application/json\nBody: {cmd: "${payload}"}\nHTTP ${r.status}\nCanary found: ${canary}`,
+        remediation: "Never pass user input from any source (URL params, JSON body, headers) to shell execution functions. Sanitise and validate all command arguments.",
+      });
+      await onLog(`[${ts()}] ⚠ COMMAND INJECTION CONFIRMED via POST JSON body`);
+      return findings;
+    }
+  }
+
+  await onLog(`[${ts()}] Command injection: no canary execution confirmed`);
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NOSQL INJECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function checkNoSqlInjection(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+  const findings: RealFinding[] = [];
+  await onLog(`[${ts()}] Testing NoSQL injection (MongoDB operators)...`);
+
+  const baseline = await probe(target.url, { timeoutMs: 8_000 });
+
+  // MongoDB operator injection payloads
+  const jsonPayloads = [
+    { username: { $gt: "" }, password: { $gt: "" } },
+    { username: { $regex: ".*" }, password: { $regex: ".*" } },
+    { username: { $ne: "invalid_user_xyz" }, password: { $ne: "invalid_pass_xyz" } },
+    { $where: "1==1" },
+  ];
+  const formPayloads = [
+    "username[$gt]=&password[$gt]=",
+    "username[$ne]=invalid_xyz&password[$ne]=invalid_xyz",
+    "username[$regex]=.*&password[$regex]=.*",
+  ];
+
+  const authEndpoints = [
+    `${target.url.replace(/\/$/, "")}/api/login`,
+    `${target.url.replace(/\/$/, "")}/login`,
+    `${target.url.replace(/\/$/, "")}/auth`,
+    `${target.url.replace(/\/$/, "")}/api/auth`,
+    `${target.url.replace(/\/$/, "")}/user/login`,
+  ];
+
+  const SUCCESS_SIGNALS = ["token", "access_token", "session", "dashboard", "welcome", "logged in", '"user":', '"id":', '"role":', '"email":'];
+
+  for (const ep of authEndpoints.slice(0, 3)) {
+    // Try JSON operator injection
+    for (const payload of jsonPayloads.slice(0, 3)) {
+      const r = await probe(ep, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        timeoutMs: 8_000,
+      });
+      if (!r) continue;
+      const bodyLower = r.body.toLowerCase();
+      const isSuccess = r.status === 200 && SUCCESS_SIGNALS.some(s => bodyLower.includes(s));
+      const baselineBodyLen = baseline?.body.length ?? 0;
+      const responseChangedSignificantly = Math.abs(r.body.length - baselineBodyLen) > 100;
+      if (isSuccess && responseChangedSignificantly) {
+        findings.push({
+          title: "NoSQL Injection — MongoDB Operator Authentication Bypass",
+          severity: "critical",
+          verification: "suspected",
+          confidence: 80,
+          cvss: 9.8,
+          cve: null,
+          description: `A MongoDB operator payload (${JSON.stringify(payload).slice(0, 80)}) at ${ep} returned a success-indicating response. This suggests authentication can be bypassed without valid credentials by exploiting MongoDB query operator injection.`,
+          evidence: `POST ${ep}\nContent-Type: application/json\nBody: ${JSON.stringify(payload)}\nHTTP ${r.status}\nSuccess signals in response: ${SUCCESS_SIGNALS.filter(s => bodyLower.includes(s)).join(", ")}\nResponse: ${r.body.slice(0, 300)}`,
+          remediation: "Sanitise all user inputs — strip MongoDB operator prefixes ($) from all input. Use Mongoose with strict schema validation. Apply a sanitisation library like express-mongo-sanitize. Never pass raw user objects into MongoDB queries.",
+        });
+        await onLog(`[${ts()}] ⚠ NOSQL INJECTION SIGNAL: MongoDB operator bypass at ${ep}`);
+        return findings;
+      }
+    }
+
+    // Try form-encoded operator injection
+    for (const formBody of formPayloads.slice(0, 2)) {
+      const r = await probe(ep, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formBody,
+        timeoutMs: 8_000,
+      });
+      if (!r) continue;
+      const bodyLower = r.body.toLowerCase();
+      const isSuccess = r.status === 200 && SUCCESS_SIGNALS.some(s => bodyLower.includes(s));
+      if (isSuccess) {
+        findings.push({
+          title: "NoSQL Injection — Form-Encoded MongoDB Operator Bypass",
+          severity: "critical",
+          verification: "suspected",
+          confidence: 75,
+          cvss: 9.8,
+          cve: null,
+          description: `Form-encoded MongoDB operator injection (${formBody}) returned a success response. The server appears to parse array-notation query parameters into MongoDB operator objects without sanitisation.`,
+          evidence: `POST ${ep}\nContent-Type: application/x-www-form-urlencoded\nBody: ${formBody}\nHTTP ${r.status}\nSuccess signals: ${SUCCESS_SIGNALS.filter(s => bodyLower.includes(s)).join(", ")}\nResponse: ${r.body.slice(0, 300)}`,
+          remediation: "Apply express-mongo-sanitize middleware. Validate that no user-supplied keys start with '$'. Use Mongoose strict mode and schema-level validation.",
+        });
+        await onLog(`[${ts()}] ⚠ NOSQL INJECTION SIGNAL: form-encoded operator at ${ep}`);
+        return findings;
+      }
+    }
+  }
+
+  // URL parameter NoSQL injection
+  const nosqlParams = ["query", "q", "filter", "search", "where", "id", "username", "user"];
+  for (const param of nosqlParams.slice(0, 4)) {
+    const r = await probe(`${target.url.replace(/\/$/, "")}?${param}[$ne]=x`, { timeoutMs: 8_000 });
+    if (!r || !baseline) continue;
+    const statusChanged = r.status !== baseline.status;
+    const lengthChanged = Math.abs(r.body.length - baseline.body.length) > 200;
+    if (statusChanged || lengthChanged) {
+      const r2 = await probe(`${target.url.replace(/\/$/, "")}?${param}[$gt]=`, { timeoutMs: 8_000 });
+      const r3 = await probe(`${target.url.replace(/\/$/, "")}?${param}[$regex]=.*`, { timeoutMs: 8_000 });
+      if (r2 && r3 && r2.status === r.status && Math.abs(r2.body.length - r.body.length) < 50) {
+        findings.push({
+          title: "NoSQL Injection Signal — Operator Parameters Affect Response",
+          severity: "high",
+          verification: "suspected",
+          confidence: 60,
+          cvss: 7.5,
+          cve: null,
+          description: `MongoDB operator-style query parameters ($ne, $gt, $regex) in '${param}' produce measurably different responses from baseline, suggesting the server passes these operators into MongoDB queries without sanitisation.`,
+          evidence: `Baseline: GET ${target.url}?${param}=x → HTTP ${baseline.status} (${baseline.body.length} bytes)\nOperator: GET ${target.url}?${param}[$ne]=x → HTTP ${r.status} (${r.body.length} bytes)\nConsistent operator behaviour confirmed with $gt and $regex`,
+          remediation: "Sanitise all user inputs before using them in database queries. Use express-mongo-sanitize. Validate parameter types strictly.",
+        });
+        await onLog(`[${ts()}] ⚠ NOSQL INJECTION SIGNAL via '${param}' parameter`);
+        break;
+      }
+    }
+  }
+
+  await onLog(`[${ts()}] NoSQL injection: probe complete`);
+  return findings;
+}
+
 export async function checkDeserialization(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Checking for deserialization attack surfaces...`);

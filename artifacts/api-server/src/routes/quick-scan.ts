@@ -14,7 +14,7 @@ import { encryptAuthHeaders } from "../lib/auth-context";
 const router: IRouter = Router();
 
 router.post("/quick-scan", async (req, res): Promise<void> => {
-  const { url, scanType = "full", profile = "safe_active", authHeaders } = req.body as {
+  const { url, scanType = "full", profile = "deep_authorized", authHeaders } = req.body as {
     url?: string;
     scanType?: string;
     profile?: string;
