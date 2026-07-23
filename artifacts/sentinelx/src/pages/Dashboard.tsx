@@ -33,6 +33,8 @@ interface Finding {
   evidence: string;
   remediation: string;
   status: string;
+  verification?: "verified" | "version_match" | "suspected" | "informational";
+  confidence?: number;
 }
 
 interface ScanStatus {
@@ -46,7 +48,7 @@ const SCAN_TYPE_INFO: Record<ScanType, { label: string; icon: React.ReactNode; d
   recon:         { label: "Recon",         icon: <Globe className="w-3.5 h-3.5" />,    desc: "DNS · TLS · Headers · Fingerprint", time: "~1 min" },
   enumeration:   { label: "Enumeration",   icon: <Server className="w-3.5 h-3.5" />,   desc: "Recon + Ports · Subdomains · Paths", time: "~3 min" },
   vulnerability: { label: "Vulnerability", icon: <AlertTriangle className="w-3.5 h-3.5"/>, desc: "Enum + SQLi · XSS · SSTI · SSRF · CORS", time: "~6 min" },
-  full:          { label: "Full",          icon: <Shield className="w-3.5 h-3.5" />,   desc: "All checks + CVE · RCE · Deser · Wayback", time: "~10 min" },
+  full:          { label: "Full",          icon: <Shield className="w-3.5 h-3.5" />,   desc: "All checks + version matches · probes · Wayback", time: "~10 min" },
 };
 
 const SEV: Record<string, { label: string; color: string; bg: string; border: string; dot: string }> = {
@@ -61,6 +63,10 @@ const SEV_ORDER = ["critical", "high", "medium", "low", "info"];
 
 function sevCount(findings: Finding[], sev: string) {
   return findings.filter(f => f.severity === sev).length;
+}
+
+function verificationLabel(value?: Finding["verification"]) {
+  return value === "suspected" ? "SUSPECTED SIGNAL" : value === "version_match" ? "VERSION MATCH" : value === "informational" ? "INFORMATIONAL" : "VERIFIED";
 }
 
 // ─── Finding Card ─────────────────────────────────────────────────────────────
@@ -84,6 +90,19 @@ function FindingCard({ finding }: { finding: Finding }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className={cn("text-[10px] font-mono font-bold tracking-widest", s.color)}>{s.label}</span>
+            <span className={cn(
+              "text-[10px] font-mono px-1.5 py-0.5 rounded border",
+              finding.verification === "suspected"
+                ? "text-yellow-300 border-yellow-500/30 bg-yellow-500/10"
+                : finding.verification === "version_match"
+                ? "text-cyan-300 border-cyan-500/30 bg-cyan-500/10"
+                : finding.verification === "informational"
+                ? "text-muted-foreground border-border bg-accent"
+                : "text-emerald-300 border-emerald-500/30 bg-emerald-500/10",
+            )}>
+              {verificationLabel(finding.verification)}
+              {finding.confidence != null ? ` · ${finding.confidence}%` : ""}
+            </span>
             {finding.cvss > 0 && (
               <span className={cn("text-[10px] font-mono px-1.5 py-0.5 rounded border", s.color, s.border)}>
                 CVSS {finding.cvss.toFixed(1)}
@@ -124,6 +143,12 @@ function FindingCard({ finding }: { finding: Finding }) {
                 <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1.5">Description</div>
                 <p className="text-sm text-foreground/80 leading-relaxed">{finding.description}</p>
               </div>
+
+              {finding.verification === "suspected" && (
+                <div className="rounded border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-[11px] font-mono text-yellow-200">
+                  This is a signal requiring analyst validation. It is not presented as a confirmed exploit.
+                </div>
+              )}
 
               {/* Evidence */}
               <div>
@@ -277,11 +302,14 @@ export function Dashboard() {
   const typeInfo = SCAN_TYPE_INFO[scanType]!;
 
   // Threat level for completed scans
+  const confirmedFindings = findings.filter(f => (f.verification ?? "verified") === "verified");
+  const suspectedFindings = findings.filter(f => f.verification === "suspected");
   const threatLevel =
-    sevCount(findings, "critical") > 0 ? { label: "CRITICAL", color: "text-red-400",    ring: "border-red-500/40",    bg: "bg-red-500/10" } :
-    sevCount(findings, "high")     > 0 ? { label: "HIGH",     color: "text-orange-400", ring: "border-orange-500/40", bg: "bg-orange-500/10" } :
-    sevCount(findings, "medium")   > 0 ? { label: "MODERATE", color: "text-yellow-400", ring: "border-yellow-500/40", bg: "bg-yellow-500/10" } :
-    findings.length > 0                ? { label: "LOW",       color: "text-blue-400",   ring: "border-blue-500/40",   bg: "bg-blue-500/10" } :
+    sevCount(confirmedFindings, "critical") > 0 ? { label: "CRITICAL", color: "text-red-400",    ring: "border-red-500/40",    bg: "bg-red-500/10" } :
+    sevCount(confirmedFindings, "high")     > 0 ? { label: "HIGH",     color: "text-orange-400", ring: "border-orange-500/40", bg: "bg-orange-500/10" } :
+    sevCount(confirmedFindings, "medium")   > 0 ? { label: "MODERATE", color: "text-yellow-400", ring: "border-yellow-500/40", bg: "bg-yellow-500/10" } :
+    confirmedFindings.length > 0             ? { label: "LOW",       color: "text-blue-400",   ring: "border-blue-500/40",   bg: "bg-blue-500/10" } :
+    suspectedFindings.length > 0             ? { label: "REVIEW SIGNALS", color: "text-yellow-300", ring: "border-yellow-500/40", bg: "bg-yellow-500/10" } :
                                          { label: "CLEAN",     color: "text-primary",    ring: "border-primary/40",    bg: "bg-primary/10" };
 
   return (
@@ -543,7 +571,7 @@ export function Dashboard() {
                 <Clock className="w-2.5 h-2.5" />
                 {scan.startedAt ? new Date(scan.startedAt).toLocaleString() : "—"}
                 <span>·</span>
-                {scan.findingsCount} finding{scan.findingsCount !== 1 ? "s" : ""} discovered
+                {confirmedFindings.length} verified · {suspectedFindings.length} signal{suspectedFindings.length !== 1 ? "s" : ""}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -584,8 +612,8 @@ export function Dashboard() {
           className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"
         >
           {[
-            { icon: <Shield className="w-4 h-4 text-primary" />,       title: "CVE Verification",    desc: "Real-time NVD database cross-reference for detected tech versions" },
-            { icon: <Zap className="w-4 h-4 text-yellow-400" />,       title: "SSTI / RCE Probes",   desc: "Detects template injection that can escalate to remote code execution" },
+            { icon: <Shield className="w-4 h-4 text-primary" />,       title: "CVE Version Matching", desc: "Cross-references exact detected versions against NVD vulnerable CPE ranges" },
+            { icon: <Zap className="w-4 h-4 text-yellow-400" />,       title: "SSTI Evidence Probes", desc: "Confirms template evaluation and separately tests a bounded command canary" },
             { icon: <Lock className="w-4 h-4 text-orange-400" />,      title: "SQLi & XSS",          desc: "Error-based SQL injection and reflected XSS reflection detection" },
             { icon: <Terminal className="w-4 h-4 text-emerald-400" />, title: "Evidence & Proof",    desc: "Every finding includes full request/response proof for validation" },
           ].map(({ icon, title, desc }) => (

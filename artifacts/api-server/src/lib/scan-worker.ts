@@ -158,6 +158,8 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
         title: finding.title,
         description: finding.description,
         severity: finding.severity,
+        verification: finding.verification ?? "verified",
+        confidence: Math.max(0, Math.min(100, Math.round(finding.confidence ?? 80))),
         status: "open",
         cvss: finding.cvss,
         cve: finding.cve ?? null,

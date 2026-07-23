@@ -66,28 +66,57 @@ const SSTI_TEST_PARAMS = [
 export async function checkSSTI(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Testing Server-Side Template Injection (SSTI)...`);
+  const canary = `sentinelx-${Math.random().toString(36).slice(2, 10)}`;
 
   for (const param of SSTI_TEST_PARAMS.slice(0, 8)) {
     for (const { payload, result, engine, math } of SSTI_PAYLOADS) {
       const testUrl = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(payload)}`;
+      const baselineUrl = `${target.url.replace(/\/$/, "")}?${param}=sentinelx-baseline`;
+      const baseline = await probe(baselineUrl, { timeoutMs: 8_000 });
       const r = await probe(testUrl, { timeoutMs: 8_000 });
       if (!r) continue;
-      if (r.body.includes(result) && !r.body.includes(payload)) {
-        // Confirmed: the expression was evaluated
-        const rce_payload = engine.includes("Jinja2") ? `{{config.__class__.__init__.__globals__['os'].popen('id').read()}}` :
-                            engine.includes("ERB")    ? `<%= \`id\` %>` :
-                            engine.includes("Freemarker") ? `${"{\"freemarker.template.utility.Execute\"?new()?(\"id\")}"}`  :
-                            `{{7*7}} — manual RCE escalation required`;
+      const baselineHasResult = baseline?.body.includes(result) ?? false;
+      const reflectedPayload = r.body.includes(payload) || r.body.includes(encodeURIComponent(payload));
+      if (r.body.includes(result) && !baselineHasResult && !reflectedPayload) {
+        // Arithmetic evaluation proves template expression execution, not RCE.
         findings.push({
           title: `SSTI — Server-Side Template Injection (${engine})`,
-          severity: "critical",
-          cvss: 9.8,
+          severity: "high",
+          verification: "verified",
+          confidence: 92,
+          cvss: 8.7,
           cve: null,
-          description: `Server-Side Template Injection confirmed in parameter '${param}'. The expression ${payload} evaluated to ${result} (${math}), proving the template engine (${engine}) executed attacker-controlled code. SSTI routinely escalates to Remote Code Execution (RCE) — an attacker can execute arbitrary OS commands as the web server user.`,
-          evidence: `REQUEST:  GET ${testUrl}\nPAYLOAD:  ${param}=${payload}\nEXPECTED: expression evaluates to "${result}"\nRESPONSE: HTTP ${r.status} — found "${result}" in body (expression was evaluated)\nTEMPLATE ENGINE: ${engine}\n\nPROOF-OF-CONCEPT RCE payload:\n${rce_payload}`,
-          remediation: `1. Never pass user input into template render() calls.\n2. Use a template sandbox (e.g. Jinja2 SandboxedEnvironment).\n3. If parameter '${param}' must contain user content, escape it before rendering: {{ content | e }}\n4. Disable eval and code execution within templates in production.\n5. Run the web server as a least-privilege user and apply seccomp/AppArmor.`,
+          description: `Server-Side Template Injection was verified in parameter '${param}'. A template expression evaluated from ${payload} to ${result} (${math}) and the result was absent from the baseline response. This confirms server-side expression evaluation, but does not by itself prove operating-system command execution.`,
+          evidence: `BASELINE: GET ${baselineUrl}\nTEST:     GET ${testUrl}\nPAYLOAD:  ${param}=${payload}\nEXPECTED: expression evaluates to "${result}"\nRESPONSE: HTTP ${r.status} — result was present and payload was not reflected\nTEMPLATE ENGINE: ${engine}\nRCE STATUS: not tested by arithmetic probe`,
+          remediation: `1. Never pass user input into template render() calls.\n2. Use a template sandbox (for example, Jinja2 SandboxedEnvironment).\n3. Escape untrusted values before rendering.\n4. Disable dynamic evaluation in production.\n5. Run the web server as a least-privilege user.`,
         });
-        await onLog(`[${ts()}] ⚠ SSTI CONFIRMED: ${engine} via param '${param}' — ${payload} → ${result}`);
+        await onLog(`[${ts()}] ⚠ SSTI VERIFIED: ${engine} via param '${param}' — expression evaluation only`);
+
+        const rcePayload = engine.includes("Jinja2")
+          ? `{{ cycler.__init__.__globals__.os.popen('printf ${canary}').read() }}`
+          : engine.includes("ERB")
+          ? `<%= \`printf ${canary}\` %>`
+          : null;
+        if (rcePayload) {
+          const rceUrl = `${target.url.replace(/\/$/, "")}?${param}=${encodeURIComponent(rcePayload)}`;
+          const rceResponse = await probe(rceUrl, { timeoutMs: 8_000 });
+          if (rceResponse?.body.includes(canary) && !rceResponse.body.includes(rcePayload)) {
+            findings.push({
+              title: `RCE canary executed via SSTI (${engine})`,
+              severity: "critical",
+              verification: "verified",
+              confidence: 98,
+              cvss: 10.0,
+              cve: null,
+              description: `A bounded, non-destructive command canary was returned by the server after the SSTI expression was submitted. This verifies operating-system command execution in the template context; no data-modifying command was used.`,
+              evidence: `REQUEST: GET ${rceUrl}\nCANARY: ${canary}\nRESPONSE: HTTP ${rceResponse.status} contained the unique canary and did not reflect the payload\nRCE STATUS: VERIFIED`,
+              remediation: "Remove the template injection sink immediately, invalidate exposed credentials, rotate sessions, review server-side logs, and isolate the affected workload. Do not rely on filtering alone; use a sandbox and least-privilege execution.",
+            });
+            await onLog(`[${ts()}] ⚠ RCE CANARY VERIFIED: ${engine} via param '${param}'`);
+          } else {
+            await onLog(`[${ts()}] SSTI confirmed but RCE canary was not observed`);
+          }
+        }
         return findings; // one confirmed is sufficient
       }
     }
@@ -139,8 +168,10 @@ export async function checkXXE(target: Target, onLog: LogFn): Promise<RealFindin
         findings.push({
           title: "XXE — XML External Entity Injection (File Read Confirmed)",
           severity: "critical",
+          verification: "verified",
+          confidence: 99,
           cvss: 9.1,
-          cve: "CVE-2019-20388",
+          cve: null,
           description: `XXE injection confirmed at ${ep}. The server processed a malicious XML payload referencing an external entity pointing to /etc/passwd. The response body contained system file content ("${indicator}"). This allows reading arbitrary files (including /etc/shadow, SSH keys, application configs), internal SSRF, and potentially remote code execution via expect:// URI handler.`,
           evidence: `REQUEST:\n  POST ${ep}\n  Content-Type: application/xml\n  Body: ${payload.slice(0, 200)}...\n\nRESPONSE:\n  HTTP ${r.status}\n  Body contains: "${indicator}" (from /etc/passwd)\n  Snippet: ${r.body.slice(0, 400)}`,
           remediation: "1. Disable external entity processing in your XML parser (highest priority).\n2. Java: factory.setFeature(\"http://xml.org/sax/features/external-general-entities\", false)\n3. PHP: libxml_disable_entity_loader(true) (deprecated) or use DOMDocument with LIBXML_NONET\n4. Python: use defusedxml instead of lxml/ElementTree\n5. Validate and whitelist XML schemas (XSD) before processing.\n6. Apply Content-Type validation — reject application/xml if not needed.",
@@ -153,8 +184,10 @@ export async function checkXXE(target: Target, onLog: LogFn): Promise<RealFindin
       if (r.body.toLowerCase().includes("entity") && r.body.toLowerCase().includes("denied")) {
         findings.push({
           title: "Possible Blind XXE — XML Entity Processing Detected",
-          severity: "high",
-          cvss: 8.1,
+          severity: "medium",
+          verification: "suspected",
+          confidence: 45,
+          cvss: 5.3,
           cve: null,
           description: `The server processed the XML body and returned an error referencing entity resolution, suggesting the XML parser attempted to resolve external entities before blocking them. Blind XXE may allow SSRF or out-of-band file exfiltration.`,
           evidence: `POST ${ep}\nContent-Type: application/xml\nResponse indicated entity processing: ${r.body.slice(0, 300)}`,
@@ -238,6 +271,14 @@ interface NvdCve {
   cvssScore: number;
   severity: string;
   published: string;
+  cpeMatches: Array<{
+    criteria: string;
+    vulnerable: boolean;
+    versionStartIncluding?: string;
+    versionStartExcluding?: string;
+    versionEndIncluding?: string;
+    versionEndExcluding?: string;
+  }>;
 }
 
 async function queryNvd(keyword: string): Promise<NvdCve[]> {
@@ -249,7 +290,7 @@ async function queryNvd(keyword: string): Promise<NvdCve[]> {
     const data = JSON.parse(r.body);
     const vulnerabilities: NvdCve[] = [];
 
-    for (const item of (data.vulnerabilities ?? []).slice(0, 5)) {
+    for (const item of (data.vulnerabilities ?? []).slice(0, 20)) {
       const cve = item.cve;
       const desc = cve?.descriptions?.find((d: any) => d.lang === "en")?.value ?? "";
       const metrics = cve?.metrics?.cvssMetricV31?.[0] ?? cve?.metrics?.cvssMetricV30?.[0] ?? cve?.metrics?.cvssMetricV2?.[0];
@@ -257,12 +298,25 @@ async function queryNvd(keyword: string): Promise<NvdCve[]> {
       const sev = metrics?.cvssData?.baseSeverity ?? "UNKNOWN";
 
       if (score >= 7.0) {
+        const cpeMatches = (cve?.configurations ?? []).flatMap((configuration: any) =>
+          (configuration.nodes ?? []).flatMap((node: any) =>
+            (node.cpeMatch ?? []).map((match: any) => ({
+              criteria: String(match.criteria ?? ""),
+              vulnerable: match.vulnerable !== false,
+              versionStartIncluding: match.versionStartIncluding,
+              versionStartExcluding: match.versionStartExcluding,
+              versionEndIncluding: match.versionEndIncluding,
+              versionEndExcluding: match.versionEndExcluding,
+            })),
+          ),
+        );
         vulnerabilities.push({
           id: cve.id,
           description: desc.slice(0, 300),
           cvssScore: score,
           severity: sev,
           published: cve.published?.slice(0, 10) ?? "",
+          cpeMatches,
         });
       }
     }
@@ -274,6 +328,49 @@ async function queryNvd(keyword: string): Promise<NvdCve[]> {
 
 interface TechProfile { name: string; version?: string; category: string; }
 
+function versionParts(version: string): number[] | null {
+  const match = version.trim().match(/^\d+(?:\.\d+){0,3}/);
+  if (!match) return null;
+  return match[0].split(".").map(Number);
+}
+
+function compareVersions(left: string, right: string): number | null {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  if (!a || !b) return null;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const delta = (a[i] ?? 0) - (b[i] ?? 0);
+    if (delta !== 0) return delta > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function cpeAppliesToExactVersion(cpe: NvdCve["cpeMatches"][number], version: string): boolean {
+  if (!cpe.vulnerable) return false;
+  const cpeVersion = cpe.criteria.split(":")[5];
+  if (cpeVersion && cpeVersion !== "*" && cpeVersion !== "-" && cpeVersion !== version) return false;
+  const startIncluding = cpe.versionStartIncluding ? compareVersions(version, cpe.versionStartIncluding) : null;
+  const startExcluding = cpe.versionStartExcluding ? compareVersions(version, cpe.versionStartExcluding) : null;
+  const endIncluding = cpe.versionEndIncluding ? compareVersions(version, cpe.versionEndIncluding) : null;
+  const endExcluding = cpe.versionEndExcluding ? compareVersions(version, cpe.versionEndExcluding) : null;
+  if (startIncluding !== null && startIncluding < 0) return false;
+  if (startExcluding !== null && startExcluding <= 0) return false;
+  if (endIncluding !== null && endIncluding > 0) return false;
+  if (endExcluding !== null && endExcluding >= 0) return false;
+  return true;
+}
+
+function cpeMatchesTechnology(cpe: NvdCve["cpeMatches"][number], tech: TechProfile): boolean {
+  const name = tech.name.toLowerCase();
+  const product = cpe.criteria.split(":")[4]?.toLowerCase() ?? "";
+  const aliases = name.includes("nginx") ? ["nginx"] :
+    name.includes("apache") ? ["apache", "http_server"] :
+    name.includes("wordpress") ? ["wordpress"] :
+    name.includes("drupal") ? ["drupal"] :
+    name.includes("joomla") ? ["joomla"] : [];
+  return aliases.some((alias) => product.includes(alias) || cpe.criteria.toLowerCase().includes(`:${alias}:`));
+}
+
 export async function lookupCvesForTechs(techs: TechProfile[], onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   if (techs.length === 0) return findings;
@@ -281,33 +378,36 @@ export async function lookupCvesForTechs(techs: TechProfile[], onLog: LogFn): Pr
   await onLog(`[${ts()}] Cross-referencing detected technologies against NVD CVE database...`);
 
   // Deduplicate and pick tech with version info first
-  const searchable = techs.filter(t => t.version && /[\d.]/.test(t.version)).slice(0, 4);
-  if (searchable.length === 0) {
-    // Try without version
-    const fallback = techs.filter(t => ["CMS", "Backend Framework", "Web Server"].includes(t.category)).slice(0, 3);
-    searchable.push(...fallback);
-  }
+  // Never turn a product-only or header-only match into a CVE finding. A CVE
+  // is only actionable here when a concrete version was observed.
+  const searchable = techs.filter(t => t.version && versionParts(t.version) !== null).slice(0, 4);
 
   for (const tech of searchable) {
     const query = tech.version ? `${tech.name} ${tech.version}` : tech.name;
     await onLog(`[${ts()}] NVD lookup: "${query}"...`);
     const cves = await queryNvd(query);
 
-    if (cves.length > 0) {
-      const topCve = cves[0]!;
-      const allCveIds = cves.map(c => c.id).join(", ");
+    const applicable = cves.filter((cve) =>
+      cve.cpeMatches.some((cpe) => cpeMatchesTechnology(cpe, tech) && cpeAppliesToExactVersion(cpe, tech.version!)),
+    );
+
+    if (applicable.length > 0) {
+      const topCve = applicable[0]!;
+      const allCveIds = applicable.map(c => c.id).join(", ");
       findings.push({
-        title: `Known CVE(s) for ${tech.name}${tech.version ? ` ${tech.version}` : ""} — ${topCve.id}`,
+        title: `CVE match verified for ${tech.name} ${tech.version} — ${topCve.id}`,
         severity: topCve.cvssScore >= 9.0 ? "critical" : topCve.cvssScore >= 7.0 ? "high" : "medium",
+        verification: "version_match",
+        confidence: 88,
         cvss: topCve.cvssScore,
         cve: topCve.id,
-        description: `NVD database shows ${cves.length} known high/critical vulnerability(ies) affecting ${tech.name}${tech.version ? ` version ${tech.version}` : ""}. Top finding: ${topCve.description}`,
-        evidence: `Detected technology: ${tech.name} ${tech.version ?? "(version unknown)"}\nNVD query: "${query}"\nCVEs found (HIGH/CRITICAL): ${allCveIds}\n\nTop CVE — ${topCve.id} (CVSS ${topCve.cvssScore} ${topCve.severity}):\n${topCve.description}\nPublished: ${topCve.published}\n\nFull details: https://nvd.nist.gov/vuln/detail/${topCve.id}`,
+        description: `NVD returned ${applicable.length} high/critical CVE(s) whose vulnerable CPE ranges include the observed ${tech.name} ${tech.version}. This is a version match, not proof that the target is exploitable; confirm vendor configuration, patch state, and the CVE's required preconditions.`,
+        evidence: `Observed technology: ${tech.name} ${tech.version}\nNVD query: "${query}"\nCPE applicability: vulnerable product/version range matched\nApplicable CVEs: ${allCveIds}\nVERIFICATION: VERSION MATCH ONLY — exploitability not tested\n\nTop CVE — ${topCve.id} (CVSS ${topCve.cvssScore} ${topCve.severity}):\n${topCve.description}\nPublished: ${topCve.published}\n\nFull details: https://nvd.nist.gov/vuln/detail/${topCve.id}`,
         remediation: `Update ${tech.name} to the latest stable version immediately. Check https://nvd.nist.gov/vuln/search for all known vulnerabilities. Subscribe to the vendor's security advisory list. Apply vendor patches within your SLA window (critical = 24h, high = 7 days).`,
       });
-      await onLog(`[${ts()}] CVE match: ${tech.name} ${tech.version ?? ""} — ${allCveIds}`);
+      await onLog(`[${ts()}] CVE match verified by CPE: ${tech.name} ${tech.version} — ${allCveIds}`);
     } else {
-      await onLog(`[${ts()}] NVD: no critical/high CVEs for "${query}"`);
+      await onLog(`[${ts()}] NVD: no exact vulnerable CPE match for "${query}"`);
     }
 
     // Respect NVD rate limit (5 req / 30s without API key)
@@ -349,12 +449,14 @@ export async function checkDeserialization(target: Target, onLog: LogFn): Promis
       const body = r.body.toLowerCase();
       if (body.includes("classnotfound") || body.includes("deserializ") || body.includes("streamcorrupt") || body.includes("aced0005")) {
         findings.push({
-          title: "Java Deserialization Endpoint Detected",
-          severity: "critical",
-          cvss: 9.8,
-          cve: "CVE-2015-4852",
-          description: `The endpoint ${url} accepts Java serialized object content (application/x-java-serialized-object) and appears to process it. Java deserialization vulnerabilities (CVE-2015-4852, Apache Commons Collections gadget chains) allow unauthenticated RCE. This class of vulnerability was used in major attacks against WebLogic, JBoss, and Jenkins.`,
-          evidence: `POST ${url}\nContent-Type: application/x-java-serialized-object\nBody: (Java magic bytes 0xACED 0x0005)\nHTTP ${r.status} — server processed the payload (error contains deserialization context)\nResponse: ${r.body.slice(0, 300)}`,
+          title: "Possible Java Deserialization Surface Detected",
+          severity: "medium",
+          verification: "suspected",
+          confidence: 42,
+          cvss: 0,
+          cve: null,
+          description: `The endpoint ${url} accepted a Java serialization content type and returned a response containing deserialization-related text. This is an attack-surface signal only; the probe does not prove gadget execution or remote code execution.`,
+          evidence: `POST ${url}\nContent-Type: application/x-java-serialized-object\nBody: (Java magic bytes 0xACED 0x0005)\nHTTP ${r.status}\nResponse indicator: ${r.body.slice(0, 300)}`,
           remediation: "1. Patch all Java frameworks and libraries (Spring, Apache Commons Collections).\n2. Use serialization filters (Java 9+ ObjectInputFilter) to allowlist safe classes.\n3. Disable Java deserialization completely if not required.\n4. Use RASP (Runtime Application Self-Protection) to detect deserialization attacks.\n5. Monitor for ClassLoader abuse and unusual class loading patterns.",
         });
         await onLog(`[${ts()}] ⚠ DESERIALIZATION endpoint detected at ${url}`);

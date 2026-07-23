@@ -52,6 +52,8 @@ router.post("/projects/:projectId/findings", async (req, res): Promise<void> => 
       description: parsed.data.description,
       severity: parsed.data.severity,
       status: parsed.data.status ?? "open",
+      verification: parsed.data.verification ?? "verified",
+      confidence: parsed.data.confidence ?? 80,
       assetId: parsed.data.assetId ?? null,
       cvss: parsed.data.cvss ?? null,
       cve: parsed.data.cve ?? null,
@@ -130,6 +132,8 @@ router.patch("/findings/:id", async (req, res): Promise<void> => {
     description?: string;
     severity?: string;
     status?: string;
+    verification?: string;
+    confidence?: number;
     cvss?: number;
     cve?: string;
     evidence?: string;
@@ -141,6 +145,8 @@ router.patch("/findings/:id", async (req, res): Promise<void> => {
   if (parsed.data.description !== undefined) updateData.description = parsed.data.description;
   if (parsed.data.severity !== undefined) updateData.severity = parsed.data.severity;
   if (parsed.data.status !== undefined) updateData.status = parsed.data.status;
+  if (parsed.data.verification !== undefined) updateData.verification = parsed.data.verification;
+  if (parsed.data.confidence !== undefined) updateData.confidence = parsed.data.confidence;
   if (parsed.data.cvss !== undefined) updateData.cvss = parsed.data.cvss;
   if (parsed.data.cve !== undefined) updateData.cve = parsed.data.cve;
   if (parsed.data.evidence !== undefined) updateData.evidence = parsed.data.evidence;

@@ -7,6 +7,7 @@
  */
 import type { FindingInputSeverity } from './findingInputSeverity';
 import type { FindingInputStatus } from './findingInputStatus';
+import type { FindingInputVerification } from './findingInputVerification';
 
 export interface FindingInput {
   /** @minLength 1 */
@@ -14,6 +15,12 @@ export interface FindingInput {
   description?: string;
   severity: FindingInputSeverity;
   status?: FindingInputStatus;
+  verification?: FindingInputVerification;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  confidence?: number;
   assetId?: number;
   cvss?: number;
   cve?: string;

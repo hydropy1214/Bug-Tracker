@@ -61,6 +61,23 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function VerificationBadge({ verification, confidence }: { verification?: string; confidence?: number }) {
+  const suspected = verification === "suspected";
+  const versionMatch = verification === "version_match";
+  const informational = verification === "informational";
+  return (
+    <span className={cn(
+      "inline-flex items-center px-2 py-0.5 rounded-sm border text-[9px] font-mono uppercase tracking-widest",
+      suspected ? "text-yellow-300 bg-yellow-500/10 border-yellow-500/25" :
+      versionMatch ? "text-cyan-300 bg-cyan-500/10 border-cyan-500/25" :
+      informational ? "text-muted-foreground bg-accent border-border" :
+      "text-emerald-300 bg-emerald-500/10 border-emerald-500/25",
+    )}>
+      {suspected ? "suspected" : versionMatch ? "version match" : informational ? "informational" : "verified"}{confidence != null ? ` · ${confidence}%` : ""}
+    </span>
+  );
+}
+
 function CvssGauge({ score }: { score: number }) {
   const pct = (score / 10) * 100;
   const color = score >= 9 ? "var(--color-destructive)" : score >= 7 ? "#fb923c" : score >= 4 ? "#facc15" : "#60a5fa";
@@ -102,6 +119,8 @@ export function FindingsTab({ projectId }: { projectId: number }) {
         title:       f.get("title") as string,
         severity:    (f.get("severity") as any) || "medium",
         status:      (f.get("status") as any) || "open",
+        verification: (f.get("verification") as any) || "verified",
+        confidence:   f.get("confidence") ? parseInt(f.get("confidence") as string, 10) : 80,
         description: f.get("description") as string,
         cve:         (f.get("cve") as string) || undefined,
         cvss:        f.get("cvss") ? parseFloat(f.get("cvss") as string) : undefined,
@@ -129,6 +148,8 @@ export function FindingsTab({ projectId }: { projectId: number }) {
         title:       f.get("title") as string,
         severity:    (f.get("severity") as any) || findingDetail.severity,
         status:      (f.get("status") as any) || findingDetail.status,
+        verification: (f.get("verification") as any) || findingDetail.verification,
+        confidence:   f.get("confidence") ? parseInt(f.get("confidence") as string, 10) : findingDetail.confidence,
         description: f.get("description") as string,
         cve:         (f.get("cve") as string) || undefined,
         cvss:        f.get("cvss") ? parseFloat(f.get("cvss") as string) : undefined,
@@ -184,6 +205,21 @@ export function FindingsTab({ projectId }: { projectId: number }) {
               ))}
             </SelectContent>
           </Select>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Verification</Label>
+          <Select name="verification" defaultValue={defaultValues?.verification ?? "verified"}>
+            <SelectTrigger className="font-mono text-sm bg-background border-border rounded-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {["verified", "suspected", "informational"].map(v => (
+                <SelectItem key={v} value={v} className="uppercase font-mono text-[11px] tracking-widest">{v}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Confidence (0–100)</Label>
+          <Input name="confidence" type="number" step="1" min="0" max="100" placeholder="80" className="font-mono text-sm bg-background border-border rounded-sm" defaultValue={defaultValues?.confidence ?? 80} />
         </div>
         <div className="space-y-2">
           <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Status</Label>
@@ -302,6 +338,7 @@ export function FindingsTab({ projectId }: { projectId: number }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1.5">
                       <SeverityBadge severity={finding.severity} />
+                      <VerificationBadge verification={finding.verification} confidence={finding.confidence} />
                       {finding.cve && (
                         <span className="text-[10px] font-mono text-muted-foreground/70 tracking-widest">{finding.cve}</span>
                       )}
@@ -357,6 +394,7 @@ export function FindingsTab({ projectId }: { projectId: number }) {
                         <div className="flex items-center gap-2">
                           <SeverityBadge severity={findingDetail.severity} />
                           <StatusBadge status={findingDetail.status} />
+                          <VerificationBadge verification={findingDetail.verification} confidence={findingDetail.confidence} />
                         </div>
                         {findingDetail.cve && (
                           <div className="font-mono text-xs text-foreground flex items-center gap-1.5">
@@ -402,7 +440,7 @@ export function FindingsTab({ projectId }: { projectId: number }) {
             <div className="mt-2 space-y-4">
               <div className={cn("flex items-center gap-4 p-4 rounded-md border", SEV[findingDetail.severity]?.bg, SEV[findingDetail.severity]?.border)}>
                 <div className="flex-1 space-y-2">
-                  <div className="flex items-center gap-2"><SeverityBadge severity={findingDetail.severity} /><StatusBadge status={findingDetail.status} /></div>
+                  <div className="flex items-center gap-2"><SeverityBadge severity={findingDetail.severity} /><StatusBadge status={findingDetail.status} /><VerificationBadge verification={findingDetail.verification} confidence={findingDetail.confidence} /></div>
                   {findingDetail.cve && <div className="font-mono text-xs">{findingDetail.cve}</div>}
                 </div>
                 {findingDetail.cvss != null && <CvssGauge score={findingDetail.cvss} />}

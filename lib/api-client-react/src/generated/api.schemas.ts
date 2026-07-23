@@ -172,6 +172,16 @@ export const FindingStatus = {
   wont_fix: 'wont_fix',
 } as const;
 
+export type FindingVerification = typeof FindingVerification[keyof typeof FindingVerification];
+
+
+export const FindingVerification = {
+  verified: 'verified',
+  version_match: 'version_match',
+  suspected: 'suspected',
+  informational: 'informational',
+} as const;
+
 export interface Finding {
   id: number;
   projectId: number;
@@ -182,6 +192,12 @@ export interface Finding {
   description?: string | null;
   severity: FindingSeverity;
   status: FindingStatus;
+  verification?: FindingVerification;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  confidence?: number;
   /** @nullable */
   cvss?: number | null;
   /** @nullable */
@@ -215,12 +231,28 @@ export const FindingInputStatus = {
   wont_fix: 'wont_fix',
 } as const;
 
+export type FindingInputVerification = typeof FindingInputVerification[keyof typeof FindingInputVerification];
+
+
+export const FindingInputVerification = {
+  verified: 'verified',
+  version_match: 'version_match',
+  suspected: 'suspected',
+  informational: 'informational',
+} as const;
+
 export interface FindingInput {
   /** @minLength 1 */
   title: string;
   description?: string;
   severity: FindingInputSeverity;
   status?: FindingInputStatus;
+  verification?: FindingInputVerification;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  confidence?: number;
   assetId?: number;
   cvss?: number;
   cve?: string;
@@ -249,11 +281,27 @@ export const FindingUpdateStatus = {
   wont_fix: 'wont_fix',
 } as const;
 
+export type FindingUpdateVerification = typeof FindingUpdateVerification[keyof typeof FindingUpdateVerification];
+
+
+export const FindingUpdateVerification = {
+  verified: 'verified',
+  version_match: 'version_match',
+  suspected: 'suspected',
+  informational: 'informational',
+} as const;
+
 export interface FindingUpdate {
   title?: string;
   description?: string;
   severity?: FindingUpdateSeverity;
   status?: FindingUpdateStatus;
+  verification?: FindingUpdateVerification;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  confidence?: number;
   cvss?: number;
   cve?: string;
   evidence?: string;

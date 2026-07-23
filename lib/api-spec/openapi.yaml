@@ -608,6 +608,13 @@ components:
         status:
           type: string
           enum: [open, in_progress, resolved, wont_fix]
+        verification:
+          type: string
+          enum: [verified, version_match, suspected, informational]
+        confidence:
+          type: integer
+          minimum: 0
+          maximum: 100
         cvss:
           type: ["number", "null"]
         cve:
@@ -639,6 +646,15 @@ components:
           type: string
           enum: [open, in_progress, resolved, wont_fix]
           default: open
+        verification:
+          type: string
+          enum: [verified, version_match, suspected, informational]
+          default: verified
+        confidence:
+          type: integer
+          minimum: 0
+          maximum: 100
+          default: 80
         assetId:
           type: integer
         cvss:
@@ -663,6 +679,13 @@ components:
         status:
           type: string
           enum: [open, in_progress, resolved, wont_fix]
+        verification:
+          type: string
+          enum: [verified, version_match, suspected, informational]
+        confidence:
+          type: integer
+          minimum: 0
+          maximum: 100
         cvss:
           type: number
         cve:

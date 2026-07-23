@@ -220,6 +220,11 @@ export const ListFindingsParams = zod.object({
   "projectId": zod.coerce.number()
 })
 
+export const listFindingsResponseConfidenceMin = 0;
+export const listFindingsResponseConfidenceMax = 100;
+
+
+
 export const ListFindingsResponseItem = zod.object({
   "id": zod.number(),
   "projectId": zod.number(),
@@ -228,6 +233,8 @@ export const ListFindingsResponseItem = zod.object({
   "description": zod.string().nullish(),
   "severity": zod.enum(['critical', 'high', 'medium', 'low', 'info']),
   "status": zod.enum(['open', 'in_progress', 'resolved', 'wont_fix']),
+  "verification": zod.enum(['verified', 'version_match', 'suspected', 'informational']).optional(),
+  "confidence": zod.number().min(listFindingsResponseConfidenceMin).max(listFindingsResponseConfidenceMax).optional(),
   "cvss": zod.number().nullish(),
   "cve": zod.string().nullish(),
   "evidence": zod.string().nullish(),
@@ -247,18 +254,31 @@ export const CreateFindingParams = zod.object({
 
 
 export const createFindingBodyStatusDefault = `open`;
+export const createFindingBodyVerificationDefault = `verified`;
+export const createFindingBodyConfidenceDefault = 80;
+export const createFindingBodyConfidenceMin = 0;
+export const createFindingBodyConfidenceMax = 100;
+
+
 
 export const CreateFindingBody = zod.object({
   "title": zod.string().min(1),
   "description": zod.string().optional(),
   "severity": zod.enum(['critical', 'high', 'medium', 'low', 'info']),
   "status": zod.enum(['open', 'in_progress', 'resolved', 'wont_fix']).default(createFindingBodyStatusDefault),
+  "verification": zod.enum(['verified', 'version_match', 'suspected', 'informational']).default(createFindingBodyVerificationDefault),
+  "confidence": zod.number().min(createFindingBodyConfidenceMin).max(createFindingBodyConfidenceMax).default(createFindingBodyConfidenceDefault),
   "assetId": zod.number().optional(),
   "cvss": zod.number().optional(),
   "cve": zod.string().optional(),
   "evidence": zod.string().optional(),
   "remediation": zod.string().optional()
 })
+
+export const createFindingResponseConfidenceMin = 0;
+export const createFindingResponseConfidenceMax = 100;
+
+
 
 export const CreateFindingResponse = zod.object({
   "id": zod.number(),
@@ -268,6 +288,8 @@ export const CreateFindingResponse = zod.object({
   "description": zod.string().nullish(),
   "severity": zod.enum(['critical', 'high', 'medium', 'low', 'info']),
   "status": zod.enum(['open', 'in_progress', 'resolved', 'wont_fix']),
+  "verification": zod.enum(['verified', 'version_match', 'suspected', 'informational']).optional(),
+  "confidence": zod.number().min(createFindingResponseConfidenceMin).max(createFindingResponseConfidenceMax).optional(),
   "cvss": zod.number().nullish(),
   "cve": zod.string().nullish(),
   "evidence": zod.string().nullish(),
@@ -284,6 +306,11 @@ export const GetFindingParams = zod.object({
   "id": zod.coerce.number()
 })
 
+export const getFindingResponseConfidenceMin = 0;
+export const getFindingResponseConfidenceMax = 100;
+
+
+
 export const GetFindingResponse = zod.object({
   "id": zod.number(),
   "projectId": zod.number(),
@@ -292,6 +319,8 @@ export const GetFindingResponse = zod.object({
   "description": zod.string().nullish(),
   "severity": zod.enum(['critical', 'high', 'medium', 'low', 'info']),
   "status": zod.enum(['open', 'in_progress', 'resolved', 'wont_fix']),
+  "verification": zod.enum(['verified', 'version_match', 'suspected', 'informational']).optional(),
+  "confidence": zod.number().min(getFindingResponseConfidenceMin).max(getFindingResponseConfidenceMax).optional(),
   "cvss": zod.number().nullish(),
   "cve": zod.string().nullish(),
   "evidence": zod.string().nullish(),
@@ -308,16 +337,28 @@ export const UpdateFindingParams = zod.object({
   "id": zod.coerce.number()
 })
 
+export const updateFindingBodyConfidenceMin = 0;
+export const updateFindingBodyConfidenceMax = 100;
+
+
+
 export const UpdateFindingBody = zod.object({
   "title": zod.string().optional(),
   "description": zod.string().optional(),
   "severity": zod.enum(['critical', 'high', 'medium', 'low', 'info']).optional(),
   "status": zod.enum(['open', 'in_progress', 'resolved', 'wont_fix']).optional(),
+  "verification": zod.enum(['verified', 'version_match', 'suspected', 'informational']).optional(),
+  "confidence": zod.number().min(updateFindingBodyConfidenceMin).max(updateFindingBodyConfidenceMax).optional(),
   "cvss": zod.number().optional(),
   "cve": zod.string().optional(),
   "evidence": zod.string().optional(),
   "remediation": zod.string().optional()
 })
+
+export const updateFindingResponseConfidenceMin = 0;
+export const updateFindingResponseConfidenceMax = 100;
+
+
 
 export const UpdateFindingResponse = zod.object({
   "id": zod.number(),
@@ -327,6 +368,8 @@ export const UpdateFindingResponse = zod.object({
   "description": zod.string().nullish(),
   "severity": zod.enum(['critical', 'high', 'medium', 'low', 'info']),
   "status": zod.enum(['open', 'in_progress', 'resolved', 'wont_fix']),
+  "verification": zod.enum(['verified', 'version_match', 'suspected', 'informational']).optional(),
+  "confidence": zod.number().min(updateFindingResponseConfidenceMin).max(updateFindingResponseConfidenceMax).optional(),
   "cvss": zod.number().nullish(),
   "cve": zod.string().nullish(),
   "evidence": zod.string().nullish(),

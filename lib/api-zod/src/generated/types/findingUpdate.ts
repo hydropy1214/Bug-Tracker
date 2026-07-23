@@ -7,12 +7,19 @@
  */
 import type { FindingUpdateSeverity } from './findingUpdateSeverity';
 import type { FindingUpdateStatus } from './findingUpdateStatus';
+import type { FindingUpdateVerification } from './findingUpdateVerification';
 
 export interface FindingUpdate {
   title?: string;
   description?: string;
   severity?: FindingUpdateSeverity;
   status?: FindingUpdateStatus;
+  verification?: FindingUpdateVerification;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  confidence?: number;
   cvss?: number;
   cve?: string;
   evidence?: string;

@@ -31,6 +31,8 @@ const dnsResolve = dns.promises;
 export interface RealFinding {
   title: string;
   severity: "critical" | "high" | "medium" | "low";
+  verification?: "verified" | "version_match" | "suspected" | "informational";
+  confidence?: number;
   description: string;
   cvss: number;
   cve: string | null;
@@ -355,8 +357,8 @@ const SERVICE_RISKS: Record<string, { severity: "critical"|"high"|"medium"|"low"
   "ftp":      { severity: "high",     cvss: 7.5, cve: null, description: "FTP service is publicly exposed. FTP transmits credentials and data in plaintext, making it trivially interceptable. Anonymous FTP access may allow file read/write without authentication.", remediation: "Replace FTP with SFTP or FTPS. Restrict access to known IPs via firewall. Audit for anonymous access and disable it immediately." },
   "telnet":   { severity: "critical", cvss: 9.8, cve: null, description: "Telnet is exposed to the internet. Telnet transmits all data, including passwords, in plaintext. It is completely insecure over untrusted networks.", remediation: "Replace Telnet with SSH immediately. Block port 23 at the firewall. Disable the Telnet daemon." },
   "smtp":     { severity: "medium",   cvss: 5.3, cve: null, description: "SMTP relay port is directly exposed. An open relay allows anyone to send email through this server, enabling spam abuse and domain reputation damage.", remediation: "Restrict SMTP to authenticated users only. Disable open relay. Consider moving to a managed email service." },
-  "rdp":      { severity: "critical", cvss: 9.8, cve: "CVE-2019-0708", description: "Remote Desktop Protocol is exposed to the internet. RDP is heavily targeted for ransomware delivery via brute-force attacks. BlueKeep (CVE-2019-0708) allows unauthenticated RCE on unpatched systems.", remediation: "Block port 3389 from the internet. Require VPN before RDP is accessible. Enable Network Level Authentication. Apply all Windows patches." },
-  "smb":      { severity: "critical", cvss: 9.8, cve: "CVE-2017-0144", description: "SMB (Windows file sharing) is exposed to the internet. EternalBlue (CVE-2017-0144) exploits this for unauthenticated RCE and was used in the WannaCry and NotPetya attacks.", remediation: "Block TCP 445 from the internet unconditionally. Use VPN for internal file sharing." },
+  "rdp":      { severity: "high",     cvss: 7.5, cve: null, description: "Remote Desktop Protocol is exposed to the internet. RDP is heavily targeted for ransomware delivery and brute-force attacks, but an open port alone does not prove a specific RDP CVE or remote code execution.", remediation: "Block port 3389 from the internet. Require VPN before RDP is accessible. Enable Network Level Authentication and apply current Windows patches." },
+  "smb":      { severity: "high",     cvss: 7.5, cve: null, description: "SMB (Windows file sharing) is exposed to the internet. Public SMB increases brute-force, relay, and legacy-protocol risk, but an open port alone does not prove EternalBlue or remote code execution.", remediation: "Block TCP 445 from the internet unconditionally. Use VPN for internal file sharing and disable legacy SMB protocols." },
   "mysql":    { severity: "critical", cvss: 9.4, cve: null, description: "MySQL database port is directly accessible from the internet. Any unauthenticated actor can attempt to brute-force credentials or exploit unpatched vulnerabilities.", remediation: "Bind MySQL to 127.0.0.1. Remove all remote root accounts. Block port 3306 at the firewall." },
   "postgres": { severity: "critical", cvss: 9.4, cve: null, description: "PostgreSQL is directly accessible from the internet. Exposed database ports are continuously scanned and attacked.", remediation: "Bind PostgreSQL to localhost. Block port 5432 at the firewall. Use SSH tunnels or VPN for remote DB access." },
   "mongodb":  { severity: "critical", cvss: 9.8, cve: null, description: "MongoDB is publicly accessible. Default MongoDB installations have no authentication. Millions of MongoDB instances have been ransomed via this misconfiguration.", remediation: "Enable MongoDB authentication. Bind to 127.0.0.1. Block port 27017 at the firewall." },
@@ -889,6 +891,8 @@ async function checkWayback(hostname: string, onLog: LogFn): Promise<RealFinding
       findings.push({
         title: `${sensitive.length} Sensitive Historical URL(s) in Wayback Machine`,
         severity: "medium",
+        verification: "suspected",
+        confidence: 55,
         description: `The Wayback Machine has archived ${sensitive.length} URL(s) that may represent sensitive file paths, backup files, or admin interfaces. These paths may still be accessible if not properly secured.`,
         cvss: 5.3, cve: null,
         evidence: `Wayback CDX query for ${hostname}/*\nSensitive URLs found:\n${sensitive.slice(0, 15).join("\n")}`,
@@ -903,9 +907,11 @@ async function checkWayback(hostname: string, onLog: LogFn): Promise<RealFinding
     if (apiKeyUrls.length > 0) {
       findings.push({
         title: "API Keys or Secrets Found in Historical URLs",
-        severity: "critical",
-        description: `${apiKeyUrls.length} historical URL(s) contain what appear to be API keys, tokens, or passwords embedded in query strings. These are permanently indexed and may still be valid.`,
-        cvss: 9.8, cve: null,
+        severity: "high",
+        verification: "suspected",
+        confidence: 60,
+        description: `${apiKeyUrls.length} historical URL(s) contain query parameters that look like API keys, tokens, or passwords. This proves historical disclosure in an archive, but does not prove the values are still valid or that the current site serves them.`,
+        cvss: 8.1, cve: null,
         evidence: `Wayback Machine URLs with credentials:\n${apiKeyUrls.slice(0, 5).join("\n")}`,
         remediation: "Revoke all exposed credentials immediately. Remove secrets from URLs — use POST bodies or headers instead. Audit git history and CDN logs for additional exposure.",
       });
@@ -1306,7 +1312,7 @@ const SENSITIVE_PATHS: { path: string; deep?: boolean; finding: Omit<RealFinding
   { path: "/config.php",   finding: { title: "config.php Exposed", severity: "high", cvss: 7.5, cve: null, description: "Configuration file is publicly accessible and may contain database credentials or API keys.", remediation: "Block access to config files. Move configuration outside the web root." } },
   { path: "/config.yaml",  deep: true, finding: { title: "config.yaml Exposed", severity: "high", cvss: 7.5, cve: null, description: "YAML configuration file accessible, potentially exposing credentials or infrastructure details.", remediation: "Block access to all configuration files." } },
   { path: "/config.json",  deep: true, finding: { title: "config.json Exposed", severity: "high", cvss: 7.5, cve: null, description: "JSON configuration file accessible.", remediation: "Move configuration files outside the web root." } },
-  { path: "/.well-known/security.txt", finding: { title: "security.txt Present (Informational)", severity: "low", cvss: 0, cve: null, description: "security.txt found (RFC 9116). This is a best practice for responsible disclosure — note it for your bug bounty scope.", remediation: "Ensure security.txt is kept up-to-date with current contact information and PGP key." } },
+  { path: "/.well-known/security.txt", finding: { title: "security.txt Present (Informational)", severity: "low", cvss: 0, cve: null, description: "security.txt found (RFC 9116). This is a best practice for responsible disclosure — note it for your bug bounty scope.", remediation: "Ensure security.txt is kept up-to-date with current contact information and PGP key.", verification: "informational", confidence: 99 } },
   { path: "/api/v1/",      finding: { title: "API v1 Endpoint Accessible", severity: "low", cvss: 3.1, cve: null, description: "API endpoint discovered. Verify it enforces authentication and is not exposing unauthenticated data.", remediation: "Ensure all API endpoints require appropriate authentication and authorisation." } },
   { path: "/graphql",      finding: { title: "GraphQL Endpoint Exposed", severity: "medium", cvss: 5.3, cve: null, description: "GraphQL endpoint is publicly accessible.", remediation: "Disable introspection in production. Require authentication. Implement query depth and rate limiting." } },
   { path: "/.svn/entries", deep: true, finding: { title: "SVN Repository Exposed", severity: "critical", cvss: 9.8, cve: null, description: ".svn directory is accessible, exposing source code via SVN repository dump.", remediation: "Block /.svn/ access at the web server." } },
@@ -1322,6 +1328,25 @@ async function checkSensitivePaths(target: Target, deep: boolean, onLog: LogFn):
 
   const BATCH = 12;
   const findings: RealFinding[] = [];
+  const notFoundUrl = `${target.url.replace(/\/$/, "")}/sentinelx-not-found-${Date.now()}`;
+  const notFound = await probe(notFoundUrl, { timeoutMs: 8_000 });
+  const compact = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 4_000);
+  const contentMarkers: Record<string, RegExp> = {
+    "/.env": /(?:^|\n)\s*[A-Z][A-Z0-9_]{2,}\s*=/,
+    "/.env.local": /(?:^|\n)\s*[A-Z][A-Z0-9_]{2,}\s*=/,
+    "/.env.production": /(?:^|\n)\s*[A-Z][A-Z0-9_]{2,}\s*=/,
+    "/.git/config": /^\s*(?:\[core\]|repositoryformatversion|ref:)/im,
+    "/.git/HEAD": /^\s*ref:\s+refs\//im,
+    "/backup.sql": /(create\s+table|insert\s+into|--\s*(?:mysql|postgres|sql))/i,
+    "/dump.sql": /(create\s+table|insert\s+into|--\s*(?:mysql|postgres|sql))/i,
+    "/phpinfo.php": /(php version|phpinfo\(\)|configuration file)/i,
+    "/wp-login.php": /(wp-login|user_login|wordpress)/i,
+    "/wp-config.php": /(db_name|db_user|wp-config|define\s*\(\s*['"]DB_)/i,
+    "/adminer.php": /adminer/i,
+    "/phpmyadmin/": /phpmyadmin/i,
+    "/robots.txt": /(?:^|\n)\s*(?:user-agent|disallow|sitemap)\s*:/i,
+    "/.well-known/security.txt": /(?:^|\n)\s*(?:contact|expires|encryption|policy)\s*:/i,
+  };
 
   for (let i = 0; i < paths.length; i += BATCH) {
     const batch = paths.slice(i, i + BATCH);
@@ -1330,7 +1355,12 @@ async function checkSensitivePaths(target: Target, deep: boolean, onLog: LogFn):
         const url = target.url.replace(/\/$/, "") + path;
         const result = await probe(url, { timeoutMs: 8_000 });
         if (!result || result.status !== 200) return null;
-        if (result.body.toLowerCase().includes("404") && result.body.length < 2_000) return null;
+        const resultBody = compact(result.body);
+        const baselineBody = notFound ? compact(notFound.body) : "";
+        if (notFound && result.status === notFound.status && resultBody === baselineBody) return null;
+        const marker = contentMarkers[path];
+        if (marker && !marker.test(result.body)) return null;
+        if (!marker && resultBody.toLowerCase().includes("404") && result.body.length < 2_000) return null;
         const snippet = result.body.slice(0, 300).replace(/\s+/g, " ").trim();
         return {
           ...finding,
@@ -1386,17 +1416,24 @@ async function checkWebApp(target: Target, onLog: LogFn): Promise<RealFinding[]>
     target.url + "?page=1--",
     target.url + "?cat=1'%20AND%20SLEEP(0)--",
   ];
+  const sqliBaseline = await probe(target.url, { timeoutMs: 8_000 });
   for (const probeUrl of sqliProbes) {
     const r = await probe(probeUrl, { timeoutMs: 8_000 });
     if (!r) continue;
     const matched = SQLI_PATTERNS.find((p) => p.test(r.body));
-    if (matched) {
+    const baselineHasSameError = sqliBaseline ? SQLI_PATTERNS.some((p) => p.test(sqliBaseline.body)) : false;
+    const responseChanged = !sqliBaseline ||
+      r.status !== sqliBaseline.status ||
+      r.body.length !== sqliBaseline.body.length;
+    if (matched && responseChanged && !baselineHasSameError) {
       findings.push({
         title: "SQL Injection — Database Error Leaked in Response",
-        severity: "critical",
-        description: "The application returns a raw database error when SQL characters are injected. User input is being passed directly into SQL queries without parameterisation. This typically leads to data exfiltration or authentication bypass.",
-        cvss: 9.8, cve: null,
-        evidence: `Probe URL: ${probeUrl}\nHTTP status: ${r.status}\nPattern matched: ${matched}\nBody excerpt: ${r.body.slice(0, 400)}`,
+        severity: "medium",
+        verification: "suspected",
+        confidence: 58,
+        description: "A SQL-shaped input produced a database error that was not present in the baseline response. This is a suspected SQL injection/error-disclosure signal; the probe does not establish data extraction, authentication bypass, or exploitability.",
+        cvss: 5.3, cve: null,
+        evidence: `BASELINE: GET ${target.url} → HTTP ${sqliBaseline?.status ?? "unavailable"}\nPROBE: ${probeUrl} → HTTP ${r.status}\nPattern matched: ${matched}\nResponse changed from baseline: yes\nBody excerpt: ${r.body.slice(0, 400)}`,
         remediation: "Use parameterised queries / prepared statements. Never concatenate user input into SQL. Suppress detailed database errors in production. Apply least-privilege to DB accounts.",
       });
       break;
@@ -1414,13 +1451,19 @@ async function checkWebApp(target: Target, onLog: LogFn): Promise<RealFinding[]>
   for (const probeUrl of xssProbes) {
     const r = await probe(probeUrl, { timeoutMs: 8_000 });
     if (!r) continue;
-    if (r.body.includes(xssPayload) || r.body.includes("<script>xss")) {
+    const contentType = r.headers["content-type"] ?? "";
+    const reflected = r.body.includes(xssPayload) || r.body.includes("<script>xss");
+    const executableHtml = contentType.toLowerCase().includes("text/html") &&
+      /<script\b[^>]*>xss[a-z0-9]+<\/script>/i.test(r.body);
+    if (reflected && executableHtml) {
       findings.push({
         title: "Reflected XSS — Script Tag Returned Unescaped",
         severity: "high",
+        verification: "suspected",
+        confidence: 70,
         description: "The application reflects user-supplied input in the response without HTML-encoding. An attacker can craft a URL containing JavaScript that executes in victims' browsers, enabling session theft, credential phishing, and arbitrary actions on behalf of the victim.",
         cvss: 7.4, cve: null,
-        evidence: `Probe URL: ${probeUrl}\nPayload: ${xssPayload}\nPayload found unescaped in HTTP ${r.status} response`,
+        evidence: `Probe URL: ${probeUrl}\nPayload: ${xssPayload}\nContent-Type: ${contentType}\nExecutable-looking payload found in HTTP ${r.status} response\nVERIFICATION: suspected — browser execution was not performed`,
         remediation: "HTML-encode all user-controlled output. Use a templating engine that escapes by default. Implement a Content-Security-Policy. Never trust user input — sanitise at the output layer.",
       });
       break;
@@ -1571,11 +1614,17 @@ async function checkApiSurface(target: Target, onLog: LogFn): Promise<RealFindin
     const r = await probe(url, { timeoutMs: 6_000 });
     if (!r || r.status !== 200) continue;
     const body = r.body.toLowerCase();
-    if (body.includes('"status"') || body.includes("actuator") || body.includes('"activeProfiles"')) {
+    const isActuatorPayload =
+      body.includes('"activeprofiles"') ||
+      body.includes('"propertysources"') ||
+      body.includes('"contexts"') ||
+      body.includes('"beans"') ||
+      body.includes('"heapdump"');
+    if (isActuatorPayload) {
       findings.push({
         title: `Spring Boot Actuator Endpoint Exposed (${ep})`,
-        severity: ep.includes("env") || ep.includes("heap") ? "critical" : "high",
-        description: `Spring Boot Actuator ${ep} is publicly accessible. ${ep.includes("env") ? "The /env endpoint exposes all environment variables including secrets. " : ep.includes("heap") ? "The /heapdump endpoint exposes a full JVM heap dump including in-memory secrets. " : ""}Actuator endpoints can expose sensitive data or enable RCE.`,
+        severity: ep.includes("env") || ep.includes("heap") ? "high" : "medium",
+        description: `Spring Boot Actuator ${ep} is publicly accessible. ${ep.includes("env") ? "The /env endpoint may expose environment and configuration values. " : ep.includes("heap") ? "The /heapdump endpoint may expose in-memory application data. " : ""}This confirms an exposed management endpoint, not remote code execution.`,
         cvss: ep.includes("env") || ep.includes("heap") ? 9.8 : 7.5, cve: null,
         evidence: `GET ${url} → HTTP ${r.status}\n${r.body.slice(0, 300)}`,
         remediation: "Restrict Actuator to management ports: management.server.port=8081. Require authentication. Disable sensitive endpoints.",

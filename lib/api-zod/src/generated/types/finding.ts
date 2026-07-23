@@ -7,6 +7,7 @@
  */
 import type { FindingSeverity } from './findingSeverity';
 import type { FindingStatus } from './findingStatus';
+import type { FindingVerification } from './findingVerification';
 
 export interface Finding {
   id: number;
@@ -18,6 +19,12 @@ export interface Finding {
   description?: string | null;
   severity: FindingSeverity;
   status: FindingStatus;
+  verification?: FindingVerification;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  confidence?: number;
   /** @nullable */
   cvss?: number | null;
   /** @nullable */

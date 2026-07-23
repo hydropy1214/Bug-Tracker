@@ -12,6 +12,8 @@ export const findingsTable = pgTable("findings", {
   description: text("description"),
   severity: text("severity").notNull().default("medium"),
   status: text("status").notNull().default("open"),
+  verification: text("verification").notNull().default("verified"),
+  confidence: integer("confidence").notNull().default(80),
   cvss: real("cvss"),
   cve: text("cve"),
   evidence: text("evidence"),

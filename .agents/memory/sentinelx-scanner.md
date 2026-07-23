@@ -34,3 +34,14 @@ description: Architecture of the scan engine, new endpoints, and advanced probe 
 - Phase 13/14 only run for `vulnerability` and `full` scan types
 - The `vuln-probes.ts` imports `Target` and `LogFn` types from `scanner.ts` — keep in sync if those types change
 - The scan worker requires the managed PostgreSQL schema to be pushed before startup; an empty database causes repeated missing-table worker errors
+
+## Evidence classification policy
+
+- `verified` is reserved for direct, bounded evidence from the target, such as a file-content marker, metadata service response, XML file read, or a non-destructive command canary.
+- `version_match` means an observed product/version falls within an NVD vulnerable CPE range; it is not exploit verification and must be described as correlation.
+- `suspected` is used for heuristic signals that need analyst confirmation, including database error responses, reflected markup, deserialization text, and historical archive URLs.
+- Baseline comparisons and content-specific markers are required where generic 200 responses, SPA shells, or custom 404 pages could create false positives.
+
+**Why:** Security findings that overstate exploitability reduce trust and can cause incorrect remediation priorities.
+
+**How to apply:** New probes must provide differentiated evidence and explicitly state what was not tested. Do not assign a CVE, RCE claim, or confirmed severity from product names, open ports, headers, or generic error text alone.
