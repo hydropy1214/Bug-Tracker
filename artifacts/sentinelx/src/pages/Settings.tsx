@@ -1,118 +1,149 @@
 import { motion } from "framer-motion";
 import { useGetDashboardStats } from "@workspace/api-client-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { Shield, Database, Server, Code2, Globe } from "lucide-react";
+import { Shield, Database, Server, Code2, Globe, Radar, Zap, ShieldCheck, Activity, FolderKanban, Target, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const STACK = [
-  { label: "Frontend", value: "React 19 + Vite 7 + TailwindCSS 4", icon: <Globe className="w-4 h-4" /> },
-  { label: "API", value: "Express 5 + TypeScript", icon: <Server className="w-4 h-4" /> },
-  { label: "Database", value: "PostgreSQL + Drizzle ORM", icon: <Database className="w-4 h-4" /> },
-  { label: "Validation", value: "Zod v4, generated from OpenAPI spec", icon: <Code2 className="w-4 h-4" /> },
+  { label: "Frontend",   value: "React 19 · Vite 7 · Tailwind CSS 4",    icon: Globe,     color: "text-blue-400",   bg: "bg-blue-500/10",   border: "border-blue-500/20" },
+  { label: "API",        value: "Express 5 · TypeScript · Zod v4",        icon: Server,    color: "text-purple-400", bg: "bg-purple-500/10", border: "border-purple-500/20" },
+  { label: "Database",   value: "PostgreSQL · Drizzle ORM",                icon: Database,  color: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/20" },
+  { label: "Validation", value: "OpenAPI spec · generated types",          icon: Code2,     color: "text-primary",    bg: "bg-primary/10",    border: "border-primary/20" },
 ];
 
 const SCAN_TYPES = [
-  { type: "recon", label: "Reconnaissance", description: "DNS enumeration, WHOIS, subdomain discovery, tech fingerprinting, OSINT." },
-  { type: "enumeration", label: "Enumeration", description: "Port scanning, service banner grabbing, HTTP endpoint discovery, API surface mapping." },
-  { type: "vulnerability", label: "Vulnerability", description: "CVE checks, injection testing (SQLi, XSS, SSTI), misconfigurations, exposed secrets." },
-  { type: "full", label: "Full Scan", description: "All of the above in a single comprehensive scan." },
+  { type: "recon",         label: "Reconnaissance",  icon: Globe,      color: "text-blue-400",   bg: "bg-blue-500/10",   border: "border-blue-500/20",   description: "DNS enumeration, WHOIS, subdomain discovery, technology fingerprinting, OSINT gathering." },
+  { type: "enumeration",   label: "Enumeration",     icon: Radar,      color: "text-purple-400", bg: "bg-purple-500/10", border: "border-purple-500/20", description: "Port scanning, service banner grabbing, HTTP endpoint discovery, API surface mapping." },
+  { type: "vulnerability", label: "Vulnerability",   icon: ShieldCheck,color: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/20", description: "CVE checks, injection testing (SQLi, XSS, SSTI), misconfigurations, exposed secrets and credentials." },
+  { type: "full",          label: "Full Scan",       icon: Zap,        color: "text-primary",    bg: "bg-primary/10",    border: "border-primary/20",    description: "All recon, enumeration, and vulnerability checks combined in one comprehensive scan pass." },
 ];
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  show: { opacity: 1, transition: { staggerChildren: 0.06 } },
+};
+const itemVariants = {
+  hidden: { opacity: 0, y: 12 },
+  show:   { opacity: 1, y: 0, transition: { duration: 0.25 } },
+};
 
 export function Settings() {
   const { data: stats } = useGetDashboardStats();
 
+  const statCards = [
+    { label: "Projects", value: stats?.totalProjects ?? "—", icon: FolderKanban, color: "text-blue-400",   bg: "bg-blue-500/10" },
+    { label: "Assets",   value: stats?.totalAssets   ?? "—", icon: Target,       color: "text-purple-400", bg: "bg-purple-500/10" },
+    { label: "Findings", value: stats?.totalFindings  ?? "—", icon: AlertTriangle,color: "text-orange-400", bg: "bg-orange-500/10" },
+    { label: "Open",     value: stats?.openFindings   ?? "—", icon: Activity,     color: "text-red-400",    bg: "bg-red-500/10" },
+    { label: "Scans",    value: stats?.completedScans ?? "—", icon: CheckCircle2, color: "text-emerald-400",bg: "bg-emerald-500/10" },
+  ];
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="space-y-8 max-w-3xl"
-    >
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center">
-          <Shield className="mr-3 h-8 w-8" />
+    <motion.div variants={containerVariants} initial="hidden" animate="show" className="space-y-8 max-w-3xl">
+      {/* Header */}
+      <motion.div variants={itemVariants}>
+        <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
+            <Shield className="w-4 h-4 text-primary" />
+          </div>
           Settings
         </h1>
-        <p className="text-muted-foreground mt-1">Application information and configuration reference.</p>
-      </div>
+        <p className="text-sm text-muted-foreground mt-1">System information and platform configuration reference.</p>
+      </motion.div>
 
-      {/* Stats summary */}
-      <Card className="bg-card/50 backdrop-blur">
-        <CardHeader>
-          <CardTitle className="text-base">Database Status</CardTitle>
-          <CardDescription>Live counts from the connected PostgreSQL database.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {[
-              { label: "Projects", value: stats?.totalProjects ?? "—" },
-              { label: "Assets", value: stats?.totalAssets ?? "—" },
-              { label: "Findings", value: stats?.totalFindings ?? "—" },
-              { label: "Open", value: stats?.openFindings ?? "—" },
-            ].map(({ label, value }) => (
-              <div key={label} className="text-center">
-                <div className="text-2xl font-bold font-mono text-primary">{value}</div>
-                <div className="text-xs text-muted-foreground mt-1">{label}</div>
-              </div>
-            ))}
+      {/* Database status */}
+      <motion.div variants={itemVariants} className="rounded-xl border border-border/60 bg-card overflow-hidden">
+        <div className="flex items-center gap-2 px-5 py-4 border-b border-border/60">
+          <Database className="w-4 h-4 text-muted-foreground" />
+          <span className="font-semibold text-sm text-foreground">Database Status</span>
+          <div className="ml-auto flex items-center gap-1.5 text-[10px] font-mono text-emerald-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            CONNECTED
           </div>
-        </CardContent>
-      </Card>
+        </div>
+        <div className="p-5 grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {statCards.map(({ label, value, icon: Icon, color, bg }) => (
+            <div key={label} className={cn("rounded-lg p-4 text-center border border-border/40", bg)}>
+              <div className={cn("flex justify-center mb-2", color)}>
+                <Icon className="w-4 h-4" />
+              </div>
+              <div className={cn("text-2xl font-bold font-mono", color)}>{value}</div>
+              <div className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wider">{label}</div>
+            </div>
+          ))}
+        </div>
+      </motion.div>
 
-      {/* Scan types reference */}
-      <Card className="bg-card/50 backdrop-blur">
-        <CardHeader>
-          <CardTitle className="text-base">Scan Types</CardTitle>
-          <CardDescription>Reference for what each scan type covers.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {SCAN_TYPES.map((s, i) => (
-            <div key={s.type}>
-              {i > 0 && <Separator className="my-4" />}
-              <div className="flex items-start gap-3">
-                <Badge variant="outline" className="font-mono text-xs mt-0.5 flex-shrink-0">
-                  {s.type}
-                </Badge>
-                <div>
-                  <div className="text-sm font-medium">{s.label}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">{s.description}</div>
+      {/* Scan types */}
+      <motion.div variants={itemVariants} className="rounded-xl border border-border/60 bg-card overflow-hidden">
+        <div className="flex items-center gap-2 px-5 py-4 border-b border-border/60">
+          <Radar className="w-4 h-4 text-muted-foreground" />
+          <span className="font-semibold text-sm text-foreground">Scan Type Reference</span>
+        </div>
+        <div className="p-5 grid gap-3">
+          {SCAN_TYPES.map(s => {
+            const Icon = s.icon;
+            return (
+              <div key={s.type} className={cn("flex items-start gap-4 p-4 rounded-lg border", s.bg, s.border)}>
+                <div className={cn("w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 border", s.border, s.bg)}>
+                  <Icon className={cn("w-4 h-4", s.color)} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-medium text-sm text-foreground">{s.label}</span>
+                    <span className={cn("text-[10px] font-mono px-1.5 py-0.5 rounded border", s.bg, s.border, s.color)}>{s.type}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{s.description}</p>
                 </div>
               </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+            );
+          })}
+        </div>
+      </motion.div>
 
       {/* Stack */}
-      <Card className="bg-card/50 backdrop-blur">
-        <CardHeader>
-          <CardTitle className="text-base">Stack</CardTitle>
-          <CardDescription>Technologies powering SentinelX.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {STACK.map(({ label, value, icon }) => (
-            <div key={label} className="flex items-center gap-3">
-              <div className="text-muted-foreground">{icon}</div>
-              <div className="text-sm text-muted-foreground w-24 flex-shrink-0">{label}</div>
-              <div className="text-sm font-mono text-foreground">{value}</div>
+      <motion.div variants={itemVariants} className="rounded-xl border border-border/60 bg-card overflow-hidden">
+        <div className="flex items-center gap-2 px-5 py-4 border-b border-border/60">
+          <Code2 className="w-4 h-4 text-muted-foreground" />
+          <span className="font-semibold text-sm text-foreground">Tech Stack</span>
+        </div>
+        <div className="p-5 grid sm:grid-cols-2 gap-3">
+          {STACK.map(({ label, value, icon: Icon, color, bg, border }) => (
+            <div key={label} className={cn("flex items-center gap-3 p-4 rounded-lg border", bg, border)}>
+              <div className={cn("w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 border", bg, border)}>
+                <Icon className={cn("w-4 h-4", color)} />
+              </div>
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">{label}</div>
+                <div className="font-mono text-xs text-foreground">{value}</div>
+              </div>
             </div>
           ))}
-        </CardContent>
-      </Card>
+        </div>
+      </motion.div>
 
-      <Card className="bg-card/50 backdrop-blur">
-        <CardHeader>
-          <CardTitle className="text-base">About</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground space-y-2">
-          <p>
-            <span className="font-semibold text-foreground">SentinelX</span> is a security vulnerability management
-            platform for DevSecOps teams. Track assets, document findings with CVSS/CVE metadata, and monitor
-            remediation progress across multiple projects.
+      {/* About */}
+      <motion.div variants={itemVariants} className="rounded-xl border border-border/60 bg-card overflow-hidden">
+        <div className="flex items-center gap-2 px-5 py-4 border-b border-border/60">
+          <Shield className="w-4 h-4 text-muted-foreground" />
+          <span className="font-semibold text-sm text-foreground">About SentinelX</span>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            <span className="font-semibold text-foreground">SentinelX</span> is a security vulnerability management platform for DevSecOps teams.
+            Track external attack surfaces, document findings with CVE/CVSS metadata, run automated scan workflows, and monitor remediation progress across multiple projects.
           </p>
-          <p className="text-xs font-mono text-muted-foreground/60">v0.1.0</p>
-        </CardContent>
-      </Card>
+          <div className="flex items-center gap-3 pt-2 border-t border-border/60">
+            <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
+              <Zap className="w-3 h-3" />
+              v0.1.0
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] font-mono text-emerald-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              Production Ready
+            </div>
+          </div>
+        </div>
+      </motion.div>
     </motion.div>
   );
 }
