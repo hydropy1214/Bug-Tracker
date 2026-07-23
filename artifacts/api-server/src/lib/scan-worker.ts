@@ -161,16 +161,13 @@ async function pickUpPendingScans(): Promise<void> {
     .limit(5);
 
   for (const scan of pending) {
-    const phases = SCAN_PHASES[scan.type] ?? SCAN_PHASES.recon;
-    const initialLog = `[${new Date().toISOString()}] ${phases[0]}\n`;
-
     await db
       .update(scansTable)
       .set({
         status: "running",
         progress: 0,
         startedAt: new Date(),
-        logs: initialLog,
+        logs: "",
       })
       .where(eq(scansTable.id, scan.id));
 

@@ -134,6 +134,29 @@ router.patch("/findings/:id", async (req, res): Promise<void> => {
     return;
   }
 
+  // Log activity when status changes (e.g. resolved)
+  if (parsed.data.status && parsed.data.status !== finding.status) {
+    const [project] = await db
+      .select({ name: projectsTable.name })
+      .from(projectsTable)
+      .where(eq(projectsTable.id, finding.projectId));
+
+    const statusLabel: Record<string, string> = {
+      resolved: "resolved",
+      in_progress: "moved to in-progress",
+      wont_fix: "marked won't fix",
+      open: "reopened",
+    };
+    await db.insert(activityTable).values({
+      type: "finding_updated",
+      title: `Finding ${statusLabel[parsed.data.status] ?? "updated"}`,
+      description: `${finding.title} ${statusLabel[parsed.data.status] ?? "updated"} in ${project?.name ?? "project"}`,
+      severity: finding.severity,
+      projectId: finding.projectId,
+      projectName: project?.name ?? null,
+    });
+  }
+
   res.json(finding);
 });
 
@@ -154,6 +177,21 @@ router.delete("/findings/:id", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Finding not found" });
     return;
   }
+
+  // Log activity
+  const [project] = await db
+    .select({ name: projectsTable.name })
+    .from(projectsTable)
+    .where(eq(projectsTable.id, finding.projectId));
+
+  await db.insert(activityTable).values({
+    type: "finding_deleted",
+    title: `Finding closed: ${finding.title}`,
+    description: `${finding.severity} finding removed from ${project?.name ?? "project"}`,
+    severity: finding.severity,
+    projectId: finding.projectId,
+    projectName: project?.name ?? null,
+  });
 
   res.sendStatus(204);
 });

@@ -6,6 +6,7 @@ import { Shell } from '@/components/layout/Shell';
 import { Dashboard } from '@/pages/Dashboard';
 import { Projects } from '@/pages/Projects';
 import { ProjectDetail } from '@/pages/ProjectDetail';
+import { Settings } from '@/pages/Settings';
 
 const queryClient = new QueryClient();
 
@@ -25,6 +26,7 @@ function Router() {
         <Route path="/projects/:id/scans">
           {(params) => <ProjectDetail defaultTab="scans" id={params.id} />}
         </Route>
+        <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>
     </Shell>
