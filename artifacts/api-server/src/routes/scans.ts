@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
-import { db, scansTable, activityTable, projectsTable } from "@workspace/db";
+import { eq, desc } from "drizzle-orm";
+import { db, scansTable, activityTable, projectsTable, findingsTable } from "@workspace/db";
 import {
   ListScansParams,
   CreateScanParams,
@@ -90,6 +90,35 @@ router.get("/scans/:id", async (req, res): Promise<void> => {
   }
 
   res.json(scan);
+});
+
+// GET /scans/:id/status — polling endpoint used by the quick-scan UI
+// Returns the scan record plus all findings discovered so far.
+router.get("/scans/:id/status", async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid scan id" });
+    return;
+  }
+
+  const [scan] = await db
+    .select()
+    .from(scansTable)
+    .where(eq(scansTable.id, id));
+
+  if (!scan) {
+    res.status(404).json({ error: "Scan not found" });
+    return;
+  }
+
+  const findings = await db
+    .select()
+    .from(findingsTable)
+    .where(eq(findingsTable.projectId, scan.projectId))
+    .orderBy(desc(findingsTable.createdAt));
+
+  res.json({ scan, findings });
 });
 
 export default router;

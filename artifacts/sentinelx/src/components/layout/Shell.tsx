@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { ShieldAlert, LayoutDashboard, FolderKanban, Settings, Activity, Zap, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { ShieldAlert, LayoutDashboard, Settings, Activity, Zap, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useHealthCheck, useGetDashboardStats } from "@workspace/api-client-react";
+import { useHealthCheck } from "@workspace/api-client-react";
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
@@ -13,10 +13,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   }, [collapsed]);
 
   const { data: health } = useHealthCheck();
-  const { data: stats } = useGetDashboardStats();
-
-  const isOnline = health?.status === "ok" || !health; // default online if loading
-  const runningScans = stats?.runningScans ?? 0;
+  const isOnline = health?.status === "ok" || !health;
 
   const toggleSidebar = () => setCollapsed(!collapsed);
 
@@ -28,8 +25,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
         collapsed ? "w-16" : "w-64"
       )}>
         {/* Toggle Button */}
-        <button 
-          onClick={toggleSidebar} 
+        <button
+          onClick={toggleSidebar}
           className="absolute -right-3 top-6 bg-card border border-border rounded-full p-1 hover:bg-accent hover:text-primary z-50 shadow-sm"
         >
           {collapsed ? <PanelLeftOpen className="w-3 h-3" /> : <PanelLeftClose className="w-3 h-3" />}
@@ -52,54 +49,46 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
         {/* Health Indicator */}
         <div className="px-3 pt-4">
-           {!collapsed ? (
-             <div className={cn("px-3 py-2 rounded-md border flex items-center gap-2", isOnline ? "bg-emerald-500/10 border-emerald-500/20" : "bg-red-500/10 border-red-500/20")}>
-               <Activity className={cn("w-3 h-3 flex-shrink-0", isOnline ? "text-emerald-400" : "text-red-400")} />
-               <span className={cn("text-[10px] font-mono tracking-wide", isOnline ? "text-emerald-400" : "text-red-400")}>{isOnline ? "SYSTEM ONLINE" : "DEGRADED"}</span>
-               <span className={cn("ml-auto w-1.5 h-1.5 rounded-full animate-pulse", isOnline ? "bg-emerald-400" : "bg-red-400")} />
-             </div>
-           ) : (
-             <div className="flex justify-center mt-1">
-               <span className={cn("w-2 h-2 rounded-full animate-pulse", isOnline ? "bg-emerald-400" : "bg-red-400")} title={isOnline ? "System Online" : "Degraded"} />
-             </div>
-           )}
+          {!collapsed ? (
+            <div className={cn("px-3 py-2 rounded-md border flex items-center gap-2", isOnline ? "bg-emerald-500/10 border-emerald-500/20" : "bg-red-500/10 border-red-500/20")}>
+              <Activity className={cn("w-3 h-3 flex-shrink-0", isOnline ? "text-emerald-400" : "text-red-400")} />
+              <span className={cn("text-[10px] font-mono tracking-wide", isOnline ? "text-emerald-400" : "text-red-400")}>{isOnline ? "SYSTEM ONLINE" : "DEGRADED"}</span>
+              <span className={cn("ml-auto w-1.5 h-1.5 rounded-full animate-pulse", isOnline ? "bg-emerald-400" : "bg-red-400")} />
+            </div>
+          ) : (
+            <div className="flex justify-center mt-1">
+              <span className={cn("w-2 h-2 rounded-full animate-pulse", isOnline ? "bg-emerald-400" : "bg-red-400")} title={isOnline ? "System Online" : "Degraded"} />
+            </div>
+          )}
         </div>
 
         {/* Navigation */}
         <nav className="flex-1 px-3 pt-6 space-y-1 overflow-hidden">
           {!collapsed && <div className="text-[10px] font-mono text-muted-foreground/50 tracking-widest px-3 mb-3 uppercase">Workspace</div>}
-          
-          <Link href="/" className={cn("flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group", location === "/" ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50")}>
+
+          <Link href="/" className={cn(
+            "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group",
+            location === "/" ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+          )}>
             <LayoutDashboard className={cn("w-4 h-4 flex-shrink-0", location === "/" ? "text-primary" : "group-hover:text-foreground")} />
-            {!collapsed && <span>Dashboard</span>}
-          </Link>
-          
-          <Link href="/projects" className={cn("flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group relative", location.startsWith("/projects") ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50")}>
-            <FolderKanban className={cn("w-4 h-4 flex-shrink-0", location.startsWith("/projects") ? "text-primary" : "group-hover:text-foreground")} />
-            {!collapsed && <span>Projects</span>}
-            {runningScans > 0 && !collapsed && (
-              <span className="ml-auto flex items-center gap-1.5 text-[10px] font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">
-                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-                {runningScans} LIVE
-              </span>
-            )}
-            {runningScans > 0 && collapsed && (
-               <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-primary animate-pulse border-2 border-sidebar" />
-            )}
+            {!collapsed && <span>Scan Engine</span>}
           </Link>
         </nav>
 
         {/* System & Footer */}
         <div className="px-3 pb-4 space-y-1 border-t border-border pt-3 mt-3">
           {!collapsed && <div className="text-[10px] font-mono text-muted-foreground/50 tracking-widest px-3 mb-2 uppercase">System</div>}
-          <Link href="/settings" className={cn("flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group", location === "/settings" ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50")}>
+          <Link href="/settings" className={cn(
+            "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group",
+            location === "/settings" ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+          )}>
             <Settings className={cn("w-4 h-4 flex-shrink-0", location === "/settings" ? "text-primary" : "group-hover:text-foreground")} />
             {!collapsed && <span>Settings</span>}
           </Link>
-          
+
           <div className={cn("flex items-center gap-2 pt-3", collapsed ? "justify-center px-0" : "px-3")}>
             <Zap className="w-3 h-3 text-muted-foreground/40" />
-            {!collapsed && <span className="text-[10px] font-mono text-muted-foreground/40">v0.1.0-alpha</span>}
+            {!collapsed && <span className="text-[10px] font-mono text-muted-foreground/40">v0.2.0</span>}
           </div>
         </div>
       </aside>

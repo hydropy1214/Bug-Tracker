@@ -1702,6 +1702,27 @@ export async function scanTarget(
     add(await checkApiSurface(target, onLog));
   }
 
+  // ── Phase 13: Advanced vulnerability probes (vulnerability, full) ──────────
+  if (["vulnerability", "full"].includes(scanType)) {
+    const { checkSSTI, checkXXE, checkSSRF, checkDeserialization, lookupCvesForTechs } = await import("./vuln-probes");
+
+    await onLog(`[${ts()}] [Phase 13] Advanced vulnerability probes — SSTI · XXE · SSRF · Deserialization...`);
+    const [sstiF, xxeF, ssrfF, deserF] = await Promise.all([
+      checkSSTI(target, onLog),
+      checkXXE(target, onLog),
+      checkSSRF(target, onLog),
+      checkDeserialization(target, onLog),
+    ]);
+    add(sstiF); add(xxeF); add(ssrfF); add(deserF);
+
+    // CVE lookup for detected technologies (full scan only — NVD rate limits)
+    if (scanType === "full") {
+      await onLog(`[${ts()}] [Phase 14] CVE database lookup for detected technologies...`);
+      const { techs: detectedTechs } = await fingerprint(target, async () => {});
+      add(await lookupCvesForTechs(detectedTechs, onLog));
+    }
+  }
+
   // ── Summary ───────────────────────────────────────────────────────────────
   // Remove informational-only low-severity with cvss=0
   const reportable = all.filter((f) => f.cvss > 0 || f.severity !== "low");
