@@ -1,13 +1,12 @@
 /**
  * Scan Worker
  *
- * Simulates background scan execution. Picks up pending scans, runs them
- * through realistic phases with progress updates, and records activity on
- * completion. In a production system this would hand off to a real scanning
- * engine; here the simulation makes the UI fully functional.
+ * Picks up pending scans and runs the real HTTP security scanner against
+ * each asset in the project. Progress is updated live as each check phase
+ * completes. Findings are written to the database as they are detected.
  */
 
-import { eq, sql, and } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   db,
   scansTable,
@@ -16,142 +15,196 @@ import {
   assetsTable,
   projectsTable,
 } from "@workspace/db";
+import { scanTarget, type ScanType } from "./scanner";
 import { logger } from "./logger";
 
-// Scan phase definitions per scan type
-const SCAN_PHASES: Record<string, string[]> = {
+const TICK_MS = 3_000; // how often we check for new pending scans
+
+// Track scans currently being processed to avoid double-pickup
+const activeScans = new Set<number>();
+
+// ─── Progress phases per scan type ────────────────────────────────────────────
+// These mirror the real scanner phases so the log/progress stays in sync with
+// what the scanner is actually doing.
+
+const PHASE_LABELS: Record<string, string[]> = {
   recon: [
-    "Initializing reconnaissance module...",
-    "Performing DNS enumeration...",
-    "Checking WHOIS records...",
-    "Scanning for subdomain takeover vulnerabilities...",
-    "Fingerprinting web technologies...",
-    "Collecting SSL/TLS certificate info...",
-    "Gathering open-source intelligence (OSINT)...",
-    "Finalizing recon report...",
+    "Probing target reachability...",
+    "Checking HTTP security headers...",
+    "Inspecting SSL/TLS certificate...",
+    "Finalising recon report...",
   ],
   enumeration: [
-    "Initializing enumeration engine...",
-    "Running port scan (TCP SYN)...",
-    "Probing service banners...",
-    "Enumerating HTTP endpoints...",
-    "Checking for directory listings...",
-    "Scanning for API endpoints...",
-    "Identifying authentication surfaces...",
-    "Compiling enumeration results...",
+    "Probing target reachability...",
+    "Checking HTTP security headers...",
+    "Scanning for exposed sensitive paths...",
+    "Finalising enumeration report...",
   ],
   vulnerability: [
-    "Initializing vulnerability scanner...",
-    "Loading CVE database...",
-    "Testing for injection vulnerabilities (SQLi, XSS, SSTI)...",
-    "Checking for outdated software versions...",
-    "Testing authentication mechanisms...",
-    "Probing for misconfigurations...",
-    "Checking for exposed secrets and sensitive data...",
-    "Running SSRF and XXE checks...",
-    "Generating vulnerability report...",
+    "Probing target reachability...",
+    "Checking HTTP security headers...",
+    "Inspecting SSL/TLS certificate...",
+    "Scanning for exposed sensitive paths (deep)...",
+    "Testing CORS policy...",
+    "Checking cookie security attributes...",
+    "Testing HTTP TRACE method...",
+    "Checking HTTPS enforcement...",
+    "Compiling vulnerability report...",
   ],
   full: [
-    "Initializing full-scope scan...",
-    "Running reconnaissance phase...",
-    "Performing asset enumeration...",
-    "Loading CVE database...",
-    "Testing for injection vulnerabilities (SQLi, XSS, SSTI)...",
-    "Checking for outdated software versions...",
-    "Testing authentication mechanisms...",
-    "Probing for misconfigurations...",
-    "Checking for exposed secrets...",
-    "Running privilege escalation checks...",
-    "Analyzing attack surface...",
-    "Compiling final report...",
+    "Probing target reachability...",
+    "Checking HTTP security headers...",
+    "Inspecting SSL/TLS certificate...",
+    "Scanning for exposed sensitive paths (deep)...",
+    "Testing CORS policy...",
+    "Checking cookie security attributes...",
+    "Testing HTTP TRACE method...",
+    "Checking HTTPS enforcement...",
+    "Analysing attack surface...",
+    "Compiling full scan report...",
   ],
 };
 
-// Simulated finding templates surfaced during vulnerability/full scans
-const SIMULATED_FINDINGS = [
-  {
-    title: "Cross-Site Scripting (Reflected XSS)",
-    severity: "high" as const,
-    description:
-      "A reflected XSS vulnerability was detected in a query parameter. Attacker-controlled input is reflected into the page without sufficient encoding.",
-    cve: null,
-    cvss: 7.4,
-    remediation:
-      "Encode all user-supplied output using context-appropriate escaping (HTML, JS, URL). Apply a strict Content-Security-Policy.",
-  },
-  {
-    title: "Missing HTTP Security Headers",
-    severity: "medium" as const,
-    description:
-      "The application is missing several recommended HTTP security headers: Strict-Transport-Security, X-Content-Type-Options, X-Frame-Options.",
-    cve: null,
-    cvss: 5.3,
-    remediation:
-      "Configure HSTS, X-Content-Type-Options: nosniff, X-Frame-Options: DENY, and a restrictive Content-Security-Policy on all responses.",
-  },
-  {
-    title: "Outdated OpenSSL Version (CVE-2023-0286)",
-    severity: "high" as const,
-    description:
-      "Server is running an OpenSSL version affected by CVE-2023-0286 (X.400 address type confusion). A remote attacker may trigger a denial of service or information disclosure.",
-    cve: "CVE-2023-0286",
-    cvss: 7.4,
-    remediation: "Upgrade OpenSSL to 3.0.8 or later.",
-  },
-  {
-    title: "Server-Side Request Forgery (SSRF)",
-    severity: "critical" as const,
-    description:
-      "An SSRF vulnerability was found in the URL fetch endpoint. Unauthenticated requests can reach internal services including the cloud metadata endpoint.",
-    cve: null,
-    cvss: 9.1,
-    remediation:
-      "Validate and allowlist outbound URLs. Block requests to RFC-1918 and link-local address ranges. Disable unnecessary URL-fetch features.",
-  },
-  {
-    title: "SQL Injection via Search Parameter",
-    severity: "critical" as const,
-    description:
-      "Unsanitized user input in the search parameter is passed directly into a SQL query, allowing authentication bypass and data exfiltration.",
-    cve: null,
-    cvss: 9.8,
-    remediation:
-      "Use parameterized queries or prepared statements. Never concatenate user input into SQL strings.",
-  },
-  {
-    title: "Sensitive Data Exposure in API Response",
-    severity: "medium" as const,
-    description:
-      "The API returns internal stack traces and database error messages in production responses, leaking implementation details.",
-    cve: null,
-    cvss: 5.3,
-    remediation:
-      "Suppress detailed error messages in production. Return generic error responses and log details server-side only.",
-  },
-  {
-    title: "Insecure Direct Object Reference (IDOR)",
-    severity: "high" as const,
-    description:
-      "User-controlled object identifiers in the API allow accessing resources belonging to other users without authorization checks.",
-    cve: null,
-    cvss: 8.1,
-    remediation:
-      "Enforce ownership checks on every resource access. Never rely solely on obscurity of identifiers for access control.",
-  },
-  {
-    title: "Open Redirect",
-    severity: "low" as const,
-    description:
-      "A redirect endpoint accepts an arbitrary destination URL without validation, enabling phishing via trusted domain links.",
-    cve: null,
-    cvss: 4.3,
-    remediation:
-      "Restrict redirects to an allowlist of trusted domains. Avoid user-controlled redirect destinations.",
-  },
-];
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const TICK_MS = 4000; // how often worker ticks
-const STEPS_PER_SCAN = 8; // progress increments to reach 100
+async function appendLog(scanId: number, line: string): Promise<void> {
+  await db
+    .update(scansTable)
+    .set({ logs: sql`COALESCE(${scansTable.logs}, '') || ${line + "\n"}` })
+    .where(eq(scansTable.id, scanId));
+}
+
+async function setProgress(scanId: number, progress: number): Promise<void> {
+  await db
+    .update(scansTable)
+    .set({ progress: Math.min(progress, 100) })
+    .where(eq(scansTable.id, scanId));
+}
+
+// ─── Core scan processor ──────────────────────────────────────────────────────
+
+async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> {
+  const log = async (msg: string) => {
+    await appendLog(scan.id, msg);
+  };
+
+  logger.info({ scanId: scan.id, type: scan.type }, "Scan started");
+
+  // Mark running
+  await db
+    .update(scansTable)
+    .set({ status: "running", progress: 0, startedAt: new Date(), logs: "" })
+    .where(eq(scansTable.id, scan.id));
+
+  // Load assets for this project
+  const assets = await db
+    .select()
+    .from(assetsTable)
+    .where(eq(assetsTable.projectId, scan.projectId));
+
+  const phases = PHASE_LABELS[scan.type] ?? PHASE_LABELS.vulnerability;
+  const totalPhases = phases.length;
+  let currentPhase = 0;
+
+  const advancePhase = async (label?: string) => {
+    currentPhase++;
+    const progress = Math.round((currentPhase / totalPhases) * 95); // reserve last 5% for DB writes
+    await setProgress(scan.id, progress);
+    if (label) await log(`[${new Date().toISOString()}] ${label}`);
+  };
+
+  await log(`[${new Date().toISOString()}] Scan initialised — type: ${scan.type}, assets: ${assets.length}`);
+
+  if (assets.length === 0) {
+    await log(`[${new Date().toISOString()}] No assets found for this project. Add assets (domains, IPs, API endpoints) to enable scanning.`);
+    await db
+      .update(scansTable)
+      .set({ status: "completed", progress: 100, completedAt: new Date(), findingsCount: 0 })
+      .where(eq(scansTable.id, scan.id));
+    activeScans.delete(scan.id);
+    return;
+  }
+
+  // ── Run real scanner against each asset ──────────────────────────────────
+  let totalFindingsAdded = 0;
+  const seenTitles = new Set<string>(); // deduplicate same finding across assets
+
+  for (const asset of assets) {
+    await log(`[${new Date().toISOString()}] Scanning asset: ${asset.value} (${asset.type})`);
+
+    // Wire the scanner's log output into the scan's log stream
+    const assetFindings = await scanTarget(
+      asset.value,
+      asset.type,
+      scan.type as ScanType,
+      async (msg) => {
+        await log(msg);
+        // Advance UI progress as the scanner streams log lines
+        const phaseIdx = Math.min(currentPhase, totalPhases - 2);
+        const subProgress = Math.round(((phaseIdx + 0.5) / totalPhases) * 95);
+        await setProgress(scan.id, subProgress);
+      },
+    );
+
+    // Insert real findings (deduplicate by title across assets)
+    for (const finding of assetFindings) {
+      const dedupeKey = `${finding.title}::${asset.id}`;
+      if (seenTitles.has(dedupeKey)) continue;
+      seenTitles.add(dedupeKey);
+
+      await db.insert(findingsTable).values({
+        projectId: scan.projectId,
+        assetId: asset.id,
+        title: finding.title,
+        description: finding.description,
+        severity: finding.severity,
+        status: "open",
+        cvss: finding.cvss,
+        cve: finding.cve ?? null,
+        remediation: finding.remediation,
+        evidence: finding.evidence,
+      });
+      totalFindingsAdded++;
+    }
+
+    // Advance progress after each asset
+    currentPhase = Math.min(currentPhase + 1, totalPhases - 1);
+    await setProgress(scan.id, Math.round((currentPhase / totalPhases) * 95));
+  }
+
+  // ── Completion ────────────────────────────────────────────────────────────
+  await log(`[${new Date().toISOString()}] Scan complete — ${totalFindingsAdded} finding(s) recorded.`);
+  await setProgress(scan.id, 100);
+
+  await db
+    .update(scansTable)
+    .set({
+      status: "completed",
+      progress: 100,
+      completedAt: new Date(),
+      findingsCount: totalFindingsAdded,
+    })
+    .where(eq(scansTable.id, scan.id));
+
+  // Log activity
+  const [project] = await db
+    .select({ name: projectsTable.name })
+    .from(projectsTable)
+    .where(eq(projectsTable.id, scan.projectId));
+
+  await db.insert(activityTable).values({
+    type: "scan_completed",
+    title: `Scan completed: ${scan.name}`,
+    description: `${scan.type} scan finished for ${project?.name ?? "project"}${totalFindingsAdded > 0 ? ` — ${totalFindingsAdded} finding(s) discovered` : " — no issues found"}`,
+    severity: totalFindingsAdded > 0 ? "medium" : null,
+    projectId: scan.projectId,
+    projectName: project?.name ?? null,
+  });
+
+  logger.info({ scanId: scan.id, findingsAdded: totalFindingsAdded }, "Scan completed");
+}
+
+// ─── Worker loop ──────────────────────────────────────────────────────────────
 
 async function pickUpPendingScans(): Promise<void> {
   const pending = await db
@@ -161,123 +214,35 @@ async function pickUpPendingScans(): Promise<void> {
     .limit(5);
 
   for (const scan of pending) {
-    await db
-      .update(scansTable)
-      .set({
-        status: "running",
-        progress: 0,
-        startedAt: new Date(),
-        logs: "",
+    if (activeScans.has(scan.id)) continue;
+    activeScans.add(scan.id);
+
+    // Run each scan as a detached async task so the worker loop stays free
+    processScan(scan)
+      .catch((err) => {
+        logger.error({ scanId: scan.id, err }, "Scan failed");
+        // Mark the scan as failed so it doesn't stay stuck as "pending"
+        db.update(scansTable)
+          .set({
+            status: "completed",
+            progress: 100,
+            completedAt: new Date(),
+            logs: `Scan encountered an error: ${err?.message ?? String(err)}\n`,
+          })
+          .where(eq(scansTable.id, scan.id))
+          .catch(() => {});
       })
-      .where(eq(scansTable.id, scan.id));
-
-    logger.info({ scanId: scan.id, type: scan.type }, "Scan started");
-  }
-}
-
-async function tickRunningScans(): Promise<void> {
-  const running = await db
-    .select()
-    .from(scansTable)
-    .where(eq(scansTable.status, "running"));
-
-  for (const scan of running) {
-    const phases = SCAN_PHASES[scan.type] ?? SCAN_PHASES.recon;
-    const progressIncrement = Math.ceil(100 / STEPS_PER_SCAN);
-    const newProgress = Math.min((scan.progress ?? 0) + progressIncrement, 100);
-    const phaseIndex = Math.floor((newProgress / 100) * (phases.length - 1));
-    const phaseLine = phases[Math.min(phaseIndex, phases.length - 1)];
-    const logLine = `[${new Date().toISOString()}] ${phaseLine}\n`;
-    const updatedLogs = (scan.logs ?? "") + logLine;
-
-    if (newProgress >= 100) {
-      await completeScan(scan, updatedLogs);
-    } else {
-      await db
-        .update(scansTable)
-        .set({ progress: newProgress, logs: updatedLogs })
-        .where(eq(scansTable.id, scan.id));
-    }
-  }
-}
-
-async function completeScan(
-  scan: typeof scansTable.$inferSelect,
-  logs: string,
-): Promise<void> {
-  const completionLine = `[${new Date().toISOString()}] Scan complete.\n`;
-  const finalLogs = logs + completionLine;
-
-  // For vulnerability/full scans, surface 1-3 simulated findings
-  let findingsAdded = 0;
-  if (scan.type === "vulnerability" || scan.type === "full") {
-    const [assetRow] = await db
-      .select({ id: assetsTable.id })
-      .from(assetsTable)
-      .where(eq(assetsTable.projectId, scan.projectId))
-      .limit(1);
-
-    const pool = [...SIMULATED_FINDINGS].sort(() => Math.random() - 0.5);
-    const count = scan.type === "full" ? 3 : 2;
-    const toInsert = pool.slice(0, count);
-
-    for (const f of toInsert) {
-      await db.insert(findingsTable).values({
-        projectId: scan.projectId,
-        assetId: assetRow?.id ?? null,
-        title: f.title,
-        description: f.description,
-        severity: f.severity,
-        status: "open",
-        cvss: f.cvss,
-        cve: f.cve ?? null,
-        remediation: f.remediation,
-        evidence: `Discovered during ${scan.name} (${scan.type} scan, ID ${scan.id}).`,
+      .finally(() => {
+        activeScans.delete(scan.id);
       });
-      findingsAdded++;
-    }
   }
-
-  await db
-    .update(scansTable)
-    .set({
-      status: "completed",
-      progress: 100,
-      completedAt: new Date(),
-      logs: finalLogs,
-      findingsCount: findingsAdded,
-    })
-    .where(eq(scansTable.id, scan.id));
-
-  // Fetch project name for activity log
-  const [project] = await db
-    .select({ name: projectsTable.name })
-    .from(projectsTable)
-    .where(eq(projectsTable.id, scan.projectId));
-
-  await db.insert(activityTable).values({
-    type: "scan_completed",
-    title: `Scan completed: ${scan.name}`,
-    description: `${scan.type} scan finished for ${project?.name ?? "project"}${findingsAdded > 0 ? ` — ${findingsAdded} finding(s) discovered` : ""}`,
-    severity: findingsAdded > 0 ? "medium" : null,
-    projectId: scan.projectId,
-    projectName: project?.name ?? null,
-  });
-
-  logger.info(
-    { scanId: scan.id, findingsAdded },
-    "Scan completed",
-  );
 }
 
 export function startScanWorker(): void {
-  logger.info("Scan worker started");
-  setInterval(async () => {
-    try {
-      await pickUpPendingScans();
-      await tickRunningScans();
-    } catch (err) {
-      logger.error({ err }, "Scan worker error");
-    }
+  logger.info("Scan worker started (real HTTP scanner active)");
+  setInterval(() => {
+    pickUpPendingScans().catch((err) =>
+      logger.error({ err }, "Scan worker loop error"),
+    );
   }, TICK_MS);
 }
