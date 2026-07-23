@@ -33,3 +33,4 @@ description: Architecture of the scan engine, new endpoints, and advanced probe 
 - NVD API has no-key rate limit of ~5 req/30s; the `lookupCvesForTechs` function adds 700ms delay per lookup
 - Phase 13/14 only run for `vulnerability` and `full` scan types
 - The `vuln-probes.ts` imports `Target` and `LogFn` types from `scanner.ts` — keep in sync if those types change
+- The scan worker requires the managed PostgreSQL schema to be pushed before startup; an empty database causes repeated missing-table worker errors

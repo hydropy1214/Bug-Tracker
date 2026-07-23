@@ -38,7 +38,7 @@ export interface RealFinding {
   remediation: string;
 }
 
-interface Target {
+export interface Target {
   url: string;
   hostname: string;
   port: number;
