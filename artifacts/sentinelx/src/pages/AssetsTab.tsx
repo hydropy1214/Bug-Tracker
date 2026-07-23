@@ -27,8 +27,8 @@ const TYPE_CONFIG: Record<string, { icon: any; color: string; bg: string; border
 };
 
 const STATUS_CONFIG: Record<string, { color: string; bg: string; border: string; dot: string }> = {
-  active:   { color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/25", dot: "bg-emerald-400" },
-  inactive: { color: "text-slate-400",   bg: "bg-slate-500/10",   border: "border-slate-500/25",   dot: "bg-slate-400" },
+  active:   { color: "text-primary", bg: "bg-primary/10", border: "border-primary/30", dot: "bg-primary" },
+  inactive: { color: "text-muted-foreground",   bg: "bg-accent",   border: "border-border",   dot: "bg-muted-foreground" },
   unknown:  { color: "text-yellow-400",  bg: "bg-yellow-500/10",  border: "border-yellow-500/25",  dot: "bg-yellow-400" },
 };
 
@@ -36,7 +36,7 @@ function TypeBadge({ type }: { type: string }) {
   const c = TYPE_CONFIG[type] ?? TYPE_CONFIG.domain;
   const Icon = c.icon;
   return (
-    <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[10px] font-mono uppercase tracking-wider", c.bg, c.border, c.color)}>
+    <span className={cn("inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm border text-[9px] font-mono uppercase tracking-widest", c.bg, c.border, c.color)}>
       <Icon className="w-3 h-3" />
       {type.replace("_", " ")}
     </span>
@@ -46,7 +46,7 @@ function TypeBadge({ type }: { type: string }) {
 function StatusBadge({ status }: { status: string }) {
   const c = STATUS_CONFIG[status] ?? STATUS_CONFIG.unknown;
   return (
-    <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[10px] font-mono uppercase tracking-wider", c.bg, c.border, c.color)}>
+    <span className={cn("inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm border text-[9px] font-mono uppercase tracking-widest", c.bg, c.border, c.color)}>
       <span className={cn("w-1.5 h-1.5 rounded-full", c.dot)} />
       {status}
     </span>
@@ -77,11 +77,11 @@ export function AssetsTab({ projectId }: { projectId: number }) {
       }
     }, {
       onSuccess: () => {
-        toast.success("Asset added");
+        toast.success("Asset indexed");
         queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey(projectId) });
         setIsCreateOpen(false);
       },
-      onError: () => toast.error("Failed to add asset"),
+      onError: () => toast.error("Failed to index asset"),
     });
   };
 
@@ -101,7 +101,7 @@ export function AssetsTab({ projectId }: { projectId: number }) {
       }
     }, {
       onSuccess: () => {
-        toast.success("Asset updated");
+        toast.success("Asset record updated");
         queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey(projectId) });
         setEditingAsset(null);
       },
@@ -110,28 +110,28 @@ export function AssetsTab({ projectId }: { projectId: number }) {
   };
 
   const handleDelete = (id: number) => {
-    if (confirm("Delete this asset?")) {
+    if (confirm("Remove this asset from index?")) {
       deleteAsset.mutate({ id }, {
         onSuccess: () => {
-          toast.success("Asset deleted");
+          toast.success("Asset purged");
           queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey(projectId) });
         },
-        onError: () => toast.error("Failed to delete asset"),
+        onError: () => toast.error("Failed to purge asset"),
       });
     }
   };
 
   const AssetForm = ({ defaultValues, onSubmit, isPending, submitLabel }: any) => (
-    <form onSubmit={onSubmit} className="space-y-4">
+    <form onSubmit={onSubmit} className="space-y-4 pt-2">
       <div className="space-y-2">
-        <Label>Asset Value</Label>
-        <Input name="value" required placeholder="example.com or 10.0.0.0/24" className="font-mono text-sm" defaultValue={defaultValues?.value} />
+        <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Asset Value</Label>
+        <Input name="value" required placeholder="api.target.com or 10.0.0.0/24" className="font-mono text-sm bg-background border-border rounded-sm" defaultValue={defaultValues?.value} />
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label>Type</Label>
+          <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Type</Label>
           <Select name="type" defaultValue={defaultValues?.type ?? "domain"}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger className="font-mono text-sm bg-background border-border rounded-sm"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="domain">Domain</SelectItem>
               <SelectItem value="wildcard">Wildcard</SelectItem>
@@ -143,9 +143,9 @@ export function AssetsTab({ projectId }: { projectId: number }) {
         </div>
         {defaultValues && (
           <div className="space-y-2">
-            <Label>Status</Label>
+            <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Status</Label>
             <Select name="status" defaultValue={defaultValues.status ?? "active"}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger className="font-mono text-sm bg-background border-border rounded-sm"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="active">Active</SelectItem>
                 <SelectItem value="inactive">Inactive</SelectItem>
@@ -156,102 +156,107 @@ export function AssetsTab({ projectId }: { projectId: number }) {
         )}
       </div>
       <div className="space-y-2">
-        <Label>Technologies <span className="text-muted-foreground font-normal">(comma-separated)</span></Label>
-        <Input name="technologies" placeholder="Nginx, React, PostgreSQL" defaultValue={defaultValues?.technologies?.join(", ")} />
+        <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Fingerprint <span className="text-muted-foreground/50 font-normal lowercase">(comma-separated)</span></Label>
+        <Input name="technologies" placeholder="Nginx, React, PostgreSQL" className="font-mono text-sm bg-background border-border rounded-sm" defaultValue={defaultValues?.technologies?.join(", ")} />
       </div>
       <div className="space-y-2">
-        <Label>Notes</Label>
-        <Textarea name="notes" placeholder="Additional context or observations..." className="resize-none" rows={3} defaultValue={defaultValues?.notes ?? ""} />
+        <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Analyst Notes</Label>
+        <Textarea name="notes" placeholder="Context or observations..." className="resize-none font-mono text-sm bg-background border-border rounded-sm" rows={3} defaultValue={defaultValues?.notes ?? ""} />
       </div>
-      <DialogFooter>
-        <Button type="submit" disabled={isPending} className="w-full">{isPending ? "Saving..." : submitLabel}</Button>
+      <DialogFooter className="pt-2">
+        <Button type="submit" disabled={isPending} className="w-full font-mono text-xs uppercase tracking-wider rounded-sm">{isPending ? "Executing..." : submitLabel}</Button>
       </DialogFooter>
     </form>
   );
 
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-muted-foreground">
-          {assets?.length ? `${assets.length} asset${assets.length !== 1 ? "s" : ""}` : "No assets"}
+      {/* Header Toolbar */}
+      <div className="flex items-center justify-between p-1">
+        <div className="text-[11px] font-mono text-muted-foreground uppercase tracking-widest">
+          {assets?.length ? `Index contains ${assets.length} items` : "Index empty"}
         </div>
         <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
           <DialogTrigger asChild>
-            <Button size="sm" className="gap-2"><Plus className="w-4 h-4" />Add Asset</Button>
+            <Button size="sm" className="gap-2 font-mono text-xs uppercase tracking-wider rounded-sm h-8">
+              <Plus className="w-4 h-4" />
+              Index Asset
+            </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-md">
-            <DialogHeader><DialogTitle>Add Asset</DialogTitle></DialogHeader>
-            <AssetForm onSubmit={handleCreate} isPending={createAsset.isPending} submitLabel="Add Asset" />
+          <DialogContent className="max-w-md bg-card border-border">
+            <DialogHeader><DialogTitle className="font-mono text-sm text-primary uppercase tracking-wider">Index New Asset</DialogTitle></DialogHeader>
+            <AssetForm onSubmit={handleCreate} isPending={createAsset.isPending} submitLabel="Commit to Index" />
           </DialogContent>
         </Dialog>
 
-        {/* Edit dialog */}
+        {/* Edit Dialog */}
         <Dialog open={!!editingAsset} onOpenChange={(o) => !o && setEditingAsset(null)}>
-          <DialogContent className="max-w-md">
-            <DialogHeader><DialogTitle>Edit Asset</DialogTitle></DialogHeader>
+          <DialogContent className="max-w-md bg-card border-border">
+            <DialogHeader><DialogTitle className="font-mono text-sm text-primary uppercase tracking-wider">Modify Asset Record</DialogTitle></DialogHeader>
             {editingAsset && (
-              <AssetForm defaultValues={editingAsset} onSubmit={handleEdit} isPending={updateAsset.isPending} submitLabel="Save Changes" />
+              <AssetForm defaultValues={editingAsset} onSubmit={handleEdit} isPending={updateAsset.isPending} submitLabel="Save Record" />
             )}
           </DialogContent>
         </Dialog>
       </div>
 
-      {/* Assets list */}
+      {/* Grid List */}
       {isLoading ? (
-        <div className="space-y-2">
-          {[1,2,3].map(i => <div key={i} className="h-16 bg-card rounded-lg border border-border animate-pulse" />)}
+        <div className="grid sm:grid-cols-2 gap-3">
+          {[1,2,3,4].map(i => <div key={i} className="h-20 bg-card rounded-md border border-border animate-pulse" />)}
         </div>
       ) : assets?.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground rounded-xl border border-border/60 bg-card/50">
-          <Target className="w-10 h-10 mb-3 opacity-20" />
-          <p className="text-sm">No assets added yet.</p>
-          <p className="text-xs opacity-60 mt-1">Add domains, IPs, URLs, or API endpoints to this project.</p>
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground rounded-md border border-dashed border-border bg-card/30">
+          <Target className="w-8 h-8 mb-3 opacity-20" />
+          <p className="text-xs font-mono uppercase tracking-widest">No assets indexed.</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
           {assets?.map(asset => {
             const tc = TYPE_CONFIG[asset.type] ?? TYPE_CONFIG.domain;
             const Icon = tc.icon;
             return (
               <div
                 key={asset.id}
-                className="group flex items-center gap-4 p-4 rounded-lg border border-border/60 bg-card hover:bg-accent/40 hover:border-primary/20 transition-all duration-150"
+                className="group relative flex flex-col p-4 rounded-md border border-border bg-card hover:bg-accent/30 hover:border-primary/30 transition-all duration-150"
               >
-                {/* Type icon */}
-                <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0", tc.bg, tc.border, "border")}>
-                  <Icon className={cn("w-4 h-4", tc.color)} />
-                </div>
-
-                {/* Main content */}
-                <div className="flex-1 min-w-0">
-                  <div className="font-mono text-sm font-medium text-primary truncate">{asset.value}</div>
-                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                    <TypeBadge type={asset.type} />
-                    <StatusBadge status={asset.status} />
-                    {asset.technologies?.map(t => (
-                      <span key={t} className="inline-flex items-center px-2 py-0.5 rounded-md bg-accent border border-border/60 text-[10px] font-mono text-muted-foreground">
-                        {t}
-                      </span>
-                    ))}
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={cn("w-8 h-8 rounded-sm flex items-center justify-center flex-shrink-0 border", tc.bg, tc.border)}>
+                      <Icon className={cn("w-3.5 h-3.5", tc.color)} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-mono text-sm font-bold text-foreground truncate" title={asset.value}>{asset.value}</div>
+                      <div className="text-[9px] font-mono text-muted-foreground mt-0.5 uppercase tracking-widest">{formatDate(asset.createdAt)}</div>
+                    </div>
                   </div>
-                  {asset.notes && (
-                    <p className="text-xs text-muted-foreground mt-1.5 line-clamp-1">{asset.notes}</p>
-                  )}
-                </div>
-
-                {/* Meta & actions */}
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-[11px] text-muted-foreground font-mono hidden md:block">{formatDate(asset.createdAt)}</span>
+                  
+                  {/* Actions (visible on hover) */}
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-primary" onClick={() => setEditingAsset(asset)}>
-                      <Edit2 className="w-3.5 h-3.5" />
+                    <Button variant="ghost" size="icon" className="h-6 w-6 hover:text-primary rounded-sm" onClick={() => setEditingAsset(asset)}>
+                      <Edit2 className="w-3 h-3" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleDelete(asset.id)}>
-                      <Trash2 className="w-3.5 h-3.5" />
+                    <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive hover:bg-destructive/10 rounded-sm" onClick={() => handleDelete(asset.id)}>
+                      <Trash2 className="w-3 h-3" />
                     </Button>
                   </div>
                 </div>
+
+                <div className="flex items-center gap-2 flex-wrap mb-2">
+                  <TypeBadge type={asset.type} />
+                  <StatusBadge status={asset.status} />
+                  {asset.technologies?.map(t => (
+                    <span key={t} className="inline-flex items-center px-1.5 py-0.5 rounded-sm bg-accent border border-border text-[9px] font-mono text-muted-foreground uppercase tracking-widest">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+
+                {asset.notes && (
+                  <p className="text-[11px] font-mono text-muted-foreground mt-auto pt-2 border-t border-border/40 line-clamp-2 leading-relaxed">
+                    {asset.notes}
+                  </p>
+                )}
               </div>
             );
           })}

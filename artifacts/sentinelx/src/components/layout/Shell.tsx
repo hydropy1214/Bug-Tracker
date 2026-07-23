@@ -1,98 +1,112 @@
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { ShieldAlert, LayoutDashboard, FolderKanban, Settings, Activity, Zap } from "lucide-react";
+import { ShieldAlert, LayoutDashboard, FolderKanban, Settings, Activity, Zap, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-const NAV_ITEMS = [
-  { href: "/", icon: LayoutDashboard, label: "Dashboard", exact: true },
-  { href: "/projects", icon: FolderKanban, label: "Projects", exact: false },
-];
-
-function NavItem({ href, icon: Icon, label, active }: { href: string; icon: any; label: string; active: boolean }) {
-  return (
-    <Link
-      href={href}
-      className={cn(
-        "flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group relative",
-        active
-          ? "nav-active text-primary"
-          : "text-muted-foreground hover:text-foreground hover:bg-accent/60 border-l-2 border-transparent"
-      )}
-    >
-      <Icon className={cn("w-4 h-4 flex-shrink-0 transition-colors", active ? "text-primary" : "group-hover:text-foreground")} />
-      <span>{label}</span>
-      {active && (
-        <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-      )}
-    </Link>
-  );
-}
+import { useHealthCheck, useGetDashboardStats } from "@workspace/api-client-react";
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebar-collapsed") === "true");
+
+  useEffect(() => {
+    localStorage.setItem("sidebar-collapsed", String(collapsed));
+  }, [collapsed]);
+
+  const { data: health } = useHealthCheck();
+  const { data: stats } = useGetDashboardStats();
+
+  const isOnline = health?.status === "ok" || !health; // default online if loading
+  const runningScans = stats?.runningScans ?? 0;
+
+  const toggleSidebar = () => setCollapsed(!collapsed);
 
   return (
-    <div className="flex h-[100dvh] w-full bg-background bg-grid-pattern overflow-hidden">
+    <div className="flex h-[100dvh] w-full bg-background overflow-hidden text-foreground">
       {/* Sidebar */}
-      <aside className="w-64 flex-shrink-0 flex flex-col border-r border-border/60" style={{ background: 'hsl(var(--sidebar))' }}>
+      <aside className={cn(
+        "flex-shrink-0 flex flex-col border-r border-border transition-all duration-300 relative z-20 bg-sidebar",
+        collapsed ? "w-16" : "w-64"
+      )}>
+        {/* Toggle Button */}
+        <button 
+          onClick={toggleSidebar} 
+          className="absolute -right-3 top-6 bg-card border border-border rounded-full p-1 hover:bg-accent hover:text-primary z-50 shadow-sm"
+        >
+          {collapsed ? <PanelLeftOpen className="w-3 h-3" /> : <PanelLeftClose className="w-3 h-3" />}
+        </button>
+
         {/* Logo */}
-        <div className="h-16 flex items-center px-5 border-b border-border/60">
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center glow-primary">
-                <ShieldAlert className="w-4 h-4 text-primary" />
+        <div className="h-16 flex items-center px-4 border-b border-border flex-shrink-0">
+          <div className="flex items-center gap-3 overflow-hidden w-full">
+            <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center border border-primary/20 flex-shrink-0 glow-primary">
+              <ShieldAlert className="w-4 h-4 text-primary" />
+            </div>
+            {!collapsed && (
+              <div className="whitespace-nowrap transition-opacity duration-300">
+                <div className="font-mono font-bold text-base tracking-tight leading-none text-foreground">SentinelX</div>
+                <div className="text-[9px] text-muted-foreground font-mono tracking-widest leading-none mt-1">SECURITY OPS</div>
               </div>
-              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border-2 border-sidebar" style={{ borderColor: 'hsl(var(--sidebar))' }} />
-            </div>
-            <div>
-              <span className="font-mono font-bold text-base tracking-tight text-foreground">SentinelX</span>
-              <div className="text-[10px] text-muted-foreground font-mono tracking-widest">SECURITY OPS</div>
-            </div>
+            )}
           </div>
         </div>
 
-        {/* Live indicator bar */}
-        <div className="mx-4 mt-4 px-3 py-2 rounded-md bg-emerald-500/8 border border-emerald-500/20 flex items-center gap-2">
-          <Activity className="w-3 h-3 text-emerald-400 flex-shrink-0" />
-          <span className="text-[11px] text-emerald-400 font-mono tracking-wide">SYSTEM ONLINE</span>
-          <span className="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+        {/* Health Indicator */}
+        <div className="px-3 pt-4">
+           {!collapsed ? (
+             <div className={cn("px-3 py-2 rounded-md border flex items-center gap-2", isOnline ? "bg-emerald-500/10 border-emerald-500/20" : "bg-red-500/10 border-red-500/20")}>
+               <Activity className={cn("w-3 h-3 flex-shrink-0", isOnline ? "text-emerald-400" : "text-red-400")} />
+               <span className={cn("text-[10px] font-mono tracking-wide", isOnline ? "text-emerald-400" : "text-red-400")}>{isOnline ? "SYSTEM ONLINE" : "DEGRADED"}</span>
+               <span className={cn("ml-auto w-1.5 h-1.5 rounded-full animate-pulse", isOnline ? "bg-emerald-400" : "bg-red-400")} />
+             </div>
+           ) : (
+             <div className="flex justify-center mt-1">
+               <span className={cn("w-2 h-2 rounded-full animate-pulse", isOnline ? "bg-emerald-400" : "bg-red-400")} title={isOnline ? "System Online" : "Degraded"} />
+             </div>
+           )}
         </div>
 
-        {/* Nav section */}
-        <nav className="flex-1 px-3 pt-5 space-y-1">
-          <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest px-4 mb-2 uppercase">Navigation</div>
-          {NAV_ITEMS.map(({ href, icon, label, exact }) => (
-            <NavItem
-              key={href}
-              href={href}
-              icon={icon}
-              label={label}
-              active={exact ? location === href : location.startsWith(href)}
-            />
-          ))}
+        {/* Navigation */}
+        <nav className="flex-1 px-3 pt-6 space-y-1 overflow-hidden">
+          {!collapsed && <div className="text-[10px] font-mono text-muted-foreground/50 tracking-widest px-3 mb-3 uppercase">Workspace</div>}
+          
+          <Link href="/" className={cn("flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group", location === "/" ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50")}>
+            <LayoutDashboard className={cn("w-4 h-4 flex-shrink-0", location === "/" ? "text-primary" : "group-hover:text-foreground")} />
+            {!collapsed && <span>Dashboard</span>}
+          </Link>
+          
+          <Link href="/projects" className={cn("flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group relative", location.startsWith("/projects") ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50")}>
+            <FolderKanban className={cn("w-4 h-4 flex-shrink-0", location.startsWith("/projects") ? "text-primary" : "group-hover:text-foreground")} />
+            {!collapsed && <span>Projects</span>}
+            {runningScans > 0 && !collapsed && (
+              <span className="ml-auto flex items-center gap-1.5 text-[10px] font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                {runningScans} LIVE
+              </span>
+            )}
+            {runningScans > 0 && collapsed && (
+               <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-primary animate-pulse border-2 border-sidebar" />
+            )}
+          </Link>
         </nav>
 
-        {/* Footer */}
-        <div className="px-3 pb-4 space-y-1 border-t border-border/60 pt-3 mt-3">
-          <NavItem
-            href="/settings"
-            icon={Settings}
-            label="Settings"
-            active={location === "/settings"}
-          />
-          <div className="flex items-center gap-2 px-4 pt-3">
+        {/* System & Footer */}
+        <div className="px-3 pb-4 space-y-1 border-t border-border pt-3 mt-3">
+          {!collapsed && <div className="text-[10px] font-mono text-muted-foreground/50 tracking-widest px-3 mb-2 uppercase">System</div>}
+          <Link href="/settings" className={cn("flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group", location === "/settings" ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50")}>
+            <Settings className={cn("w-4 h-4 flex-shrink-0", location === "/settings" ? "text-primary" : "group-hover:text-foreground")} />
+            {!collapsed && <span>Settings</span>}
+          </Link>
+          
+          <div className={cn("flex items-center gap-2 pt-3", collapsed ? "justify-center px-0" : "px-3")}>
             <Zap className="w-3 h-3 text-muted-foreground/40" />
-            <span className="text-[10px] font-mono text-muted-foreground/40">v0.1.0</span>
+            {!collapsed && <span className="text-[10px] font-mono text-muted-foreground/40">v0.1.0-alpha</span>}
           </div>
         </div>
       </aside>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-auto relative">
-        {/* Subtle scanline overlay */}
-        <div className="pointer-events-none absolute inset-0 z-0 opacity-[0.015]"
-          style={{ backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,1) 2px, rgba(255,255,255,1) 3px)', backgroundSize: '100% 3px' }}
-        />
-        <div className="relative z-10 h-full p-8 max-w-7xl mx-auto">
+      {/* Main Content Area */}
+      <main className="flex-1 overflow-auto relative bg-grid-pattern">
+        <div className="relative z-10 min-h-full p-8 max-w-[1600px] mx-auto">
           {children}
         </div>
       </main>
