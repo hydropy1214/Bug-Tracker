@@ -275,7 +275,7 @@ export function ProjectDetail({ id, params, defaultTab = "assets" }: any) {
         <div className="mt-4">
           <TabsContent value="assets"   className="mt-0 outline-none"><AssetsTab   projectId={resolvedId} /></TabsContent>
           <TabsContent value="findings" className="mt-0 outline-none"><FindingsTab projectId={resolvedId} /></TabsContent>
-          <TabsContent value="scans"    className="mt-0 outline-none"><ScansTab    projectId={resolvedId} /></TabsContent>
+          <TabsContent value="scans"    className="mt-0 outline-none"><ScansTab    projectId={resolvedId} assetCount={project.assetCount ?? 0} /></TabsContent>
         </div>
       </Tabs>
     </motion.div>
