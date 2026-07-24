@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { projectsTable } from "./projects";
@@ -19,7 +19,10 @@ export const endpointsTable = pgTable("endpoints", {
   baseUrl: text("base_url"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (table) => ({
+  projectIdIdx: index("endpoints_project_id_idx").on(table.projectId),
+  assetIdIdx: index("endpoints_asset_id_idx").on(table.assetId),
+}));
 
 export const insertEndpointSchema = createInsertSchema(endpointsTable).omit({
   id: true,

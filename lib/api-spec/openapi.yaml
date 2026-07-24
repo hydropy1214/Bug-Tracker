@@ -444,6 +444,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /scans/{id}/stop:
+    post:
+      operationId: stopScan
+      tags: [scans]
+      summary: Stop a pending or running scan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Stop requested or scan already stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /dashboard/stats:
     get:
@@ -893,7 +917,7 @@ components:
           type: ["string", "null"]
         status:
           type: string
-          enum: [pending, running, completed, failed]
+          enum: [pending, running, completed, failed, canceled]
         progress:
           type: integer
           minimum: 0
@@ -901,6 +925,8 @@ components:
         findingsCount:
           type: integer
         wafBlocked:
+          type: boolean
+        cancelRequested:
           type: boolean
         startedAt:
           type: ["string", "null"]

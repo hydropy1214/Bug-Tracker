@@ -7,6 +7,8 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { FindingCard as DashboardFindingCard, SeveritySummary as DashboardSeveritySummary } from "@/components/dashboard/FindingCard";
+import { useScanPolling } from "@/hooks/useScanPolling";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,7 +16,7 @@ type Phase = "idle" | "scanning" | "complete" | "error";
 
 interface Scan {
   id: number;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "canceled";
   progress: number;
   logs: string | null;
   findingsCount: number;
@@ -258,7 +260,6 @@ export function Dashboard() {
 
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Auto-scroll terminal
   useEffect(() => {
@@ -274,49 +275,39 @@ export function Dashboard() {
       setPhase("complete");
       return false;
     }
-    if (data.scan.status === "failed") {
+    if (data.scan.status === "failed" || data.scan.status === "canceled") {
       window.localStorage.removeItem("sentinelx.activeScan");
-      setErrorMsg("The scan stopped unexpectedly. Start a new scan to retry.");
-      setPhase("error");
+      if (data.scan.status === "failed") {
+        setErrorMsg("The scan stopped unexpectedly. Start a new scan to retry.");
+        setPhase("error");
+      } else {
+        setPhase("complete");
+      }
       return false;
     }
     setPhase("scanning");
     return true;
   }, []);
 
-  // Cleanup poll on unmount
-  useEffect(() => {
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  const handleMissingScan = useCallback(() => {
+    window.localStorage.removeItem("sentinelx.activeScan");
+    setErrorMsg("This scan is no longer available.");
+    setPhase("error");
   }, []);
 
-  const startPolling = useCallback((id: number) => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    let stopped = false;
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/scans/${id}/status`, { cache: "no-store" });
-        if (res.status === 404) {
-          window.localStorage.removeItem("sentinelx.activeScan");
-          setErrorMsg("This scan is no longer available.");
-          setPhase("error");
-          stopped = true;
-          return;
-        }
-        if (!res.ok) throw new Error(`status ${res.status}`);
-        const data: ScanStatus = await res.json();
-        const shouldContinue = applyScanStatus(data);
-        if (!shouldContinue) stopped = true;
-      } catch {
-        // Keep retrying while the API restarts or the network reconnects.
-      }
-      if (!stopped) {
-        pollRef.current = setTimeout(poll, 1200);
-      } else {
-        pollRef.current = null;
-      }
-    };
-    void poll();
-  }, [applyScanStatus]);
+  const startPolling = useScanPolling(applyScanStatus, handleMissingScan);
+
+  const stopScan = async () => {
+    if (!scanId) return;
+    try {
+      const res = await fetch(`/api/scans/${scanId}/stop`, { method: "POST" });
+      if (!res.ok) throw new Error(`stop ${res.status}`);
+      const stoppedScan: Scan = await res.json();
+      applyScanStatus({ scan: stoppedScan, findings: scanData?.findings ?? [] });
+    } catch {
+      setErrorMsg("Could not stop the scan. The scan will continue polling.");
+    }
+  };
 
   // Restore the scan that was running before a browser refresh.
   useEffect(() => {
@@ -370,7 +361,6 @@ export function Dashboard() {
   };
 
   const reset = () => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     setPhase("idle");
     setScanId(null);
     setScanData(null);
@@ -415,10 +405,10 @@ export function Dashboard() {
         </div>
         {phase !== "idle" && (
           <button
-            onClick={reset}
+            onClick={phase === "scanning" ? stopScan : reset}
             className="flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-card text-xs font-mono text-muted-foreground hover:text-foreground hover:border-primary/40 transition-all"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> New Scan
+            {phase === "scanning" ? "Stop scan" : <><RefreshCw className="w-3.5 h-3.5" /> New Scan</>}
           </button>
         )}
       </div>
@@ -484,7 +474,7 @@ export function Dashboard() {
         <div className="rounded-md border border-border bg-card p-4 space-y-3">
           <div className="flex items-center justify-between text-xs font-mono">
             <div className="flex items-center gap-2">
-              <div className={cn("w-2 h-2 rounded-full", phase === "scanning" ? "bg-primary animate-pulse" : "bg-emerald-400")} />
+              <div className={cn("w-2 h-2 rounded-full", phase === "scanning" ? "bg-primary animate-pulse" : scan.status === "canceled" ? "bg-muted-foreground" : "bg-emerald-400")} />
               <span className="text-foreground uppercase tracking-wider truncate max-w-[300px]">{target}</span>
               <span className="text-muted-foreground">· FULL DEEP SCAN</span>
             </div>
@@ -492,8 +482,8 @@ export function Dashboard() {
               {phase === "scanning" && scan.status === "running" && (
                 <span className="text-primary animate-pulse text-[10px] tracking-widest">LIVE</span>
               )}
-              <span className={cn("font-bold", phase === "complete" ? "text-emerald-400" : "text-primary")}>
-                {phase === "complete" ? "COMPLETE" : `${scan.progress}%`}
+              <span className={cn("font-bold", phase === "complete" ? scan.status === "canceled" ? "text-muted-foreground" : "text-emerald-400" : "text-primary")}>
+                {phase === "complete" ? scan.status === "canceled" ? "CANCELED" : "COMPLETE" : `${scan.progress}%`}
               </span>
             </div>
           </div>
@@ -502,7 +492,7 @@ export function Dashboard() {
             <motion.div
               animate={{ width: `${scan.progress}%` }}
               transition={{ duration: 0.5, ease: "easeOut" }}
-              className={cn("h-full rounded-full", phase === "complete" ? "bg-emerald-400" : "bg-primary")}
+              className={cn("h-full rounded-full", phase === "complete" ? scan.status === "canceled" ? "bg-muted-foreground" : "bg-emerald-400" : "bg-primary")}
             />
           </div>
 
@@ -519,7 +509,7 @@ export function Dashboard() {
               <Terminal className="w-3.5 h-3.5 text-primary" />
               <span className="font-mono text-xs font-bold uppercase tracking-wider text-foreground">Live Scanner Output</span>
               {phase === "scanning" && <span className="ml-auto text-[10px] font-mono text-primary animate-pulse">● LIVE</span>}
-              {phase === "complete" && <span className="ml-auto text-[10px] font-mono text-emerald-400">✓ DONE</span>}
+              {phase === "complete" && <span className={cn("ml-auto text-[10px] font-mono", scan?.status === "canceled" ? "text-muted-foreground" : "text-emerald-400")}>{scan?.status === "canceled" ? "■ CANCELED" : "✓ DONE"}</span>}
             </div>
             <div
               ref={logRef}
@@ -613,7 +603,7 @@ export function Dashboard() {
           {findings.length > 0 && (
             <div className="px-5 py-3 border-b border-border/40 flex items-center gap-3 flex-wrap">
               <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Risk Summary:</span>
-              <SeveritySummary findings={findings} />
+      <DashboardSeveritySummary findings={findings} />
             </div>
           )}
 
@@ -637,7 +627,7 @@ export function Dashboard() {
                 <p className="text-xs text-muted-foreground mt-1">Target passed all security checks</p>
               </div>
             ) : (
-              sortedFindings.map(f => <FindingCard key={f.id} finding={f} />)
+                sortedFindings.map(f => <DashboardFindingCard key={f.id} finding={f} />)
             )}
           </div>
         </motion.div>

@@ -165,7 +165,7 @@ export async function checkSSTI(target: Target, onLog: LogFn): Promise<RealFindi
       const sstiCanaryPayload = payload.startsWith("{{")
         ? `{{'SENTINELX_SSTI_' + 'CONFIRM'}}`
         : payload.startsWith("${")
-        ? `${'SENTINELX_SSTI_' + 'CONFIRM'}`
+        ? `\${'SENTINELX_SSTI_' + 'CONFIRM'}`
         : payload.startsWith("<%=")
         ? `<%= 'SENTINELX_SSTI_' + 'CONFIRM' %>`
         : `{{'SENTINELX_SSTI_' + 'CONFIRM'}}`;
@@ -188,13 +188,20 @@ export async function checkSSTI(target: Target, onLog: LogFn): Promise<RealFindi
         }
       }
 
-      // ── Step 5: Proximity matching as fallback ───────────────────────────
-      const payloadPositions = findAllPositions(cleanBody, result);
-      const nearPayloadRef   = nearAny(cleanBody, payloadPositions, result.slice(0, 2), 200);
+       // ── Step 5: Proximity matching as fallback ───────────────────────────
+       // The template payload must be present in the response context. Looking
+       // for the result near another copy of the result is tautological and
+       // caused CDN/Ray-ID numbers to become SSTI signals.
+       const payloadPositions = [
+         ...findAllPositions(cleanBody, payload),
+         ...findAllPositions(cleanBody, decodeURIComponent(payload)),
+       ];
+       const nearPayloadRef = payloadPositions.length > 0 &&
+         nearAny(cleanBody, payloadPositions, result, 200);
 
       // ── Verdict ───────────────────────────────────────────────────────────
-      const verified = canaryHit || mathDoublePass;
-      const suspected = !verified && nearPayloadRef && !cleanBaseline.includes(result);
+       const verified = canaryHit || mathDoublePass;
+       const suspected = !verified && nearPayloadRef && !cleanBaseline.includes(result);
 
       if (!activeProbesAllowed() || (!verified && !suspected)) continue;
 

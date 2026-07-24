@@ -439,7 +439,7 @@ async function digQuery(hostname: string, type: string): Promise<string[]> {
   }
 }
 
-async function checkDns(hostname: string, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkDns(hostname: string, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
 
   await onLog(`[${ts()}] Running DNS enumeration with dig...`);
@@ -658,7 +658,7 @@ const SERVICE_RISKS: Record<string, { severity: "critical"|"high"|"medium"|"low"
   "memcached": { severity: "high",    cvss: 7.5, cve: null, description: "Memcached is publicly accessible. Unauthenticated access allows reading/flushing cached data. Exposed Memcached servers are also abused for amplification DDoS attacks.", remediation: "Bind Memcached to 127.0.0.1. Block port 11211 at the firewall." },
 };
 
-async function checkPorts(hostname: string, scanType: ScanType, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkPorts(hostname: string, scanType: ScanType, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
 
   // Port range depends on scan type
@@ -727,7 +727,7 @@ async function opensslTlsInfo(hostname: string, port: number): Promise<string> {
   }
 }
 
-async function checkTls(hostname: string, port: number, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkTls(hostname: string, port: number, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Running openssl TLS analysis on ${hostname}:${port}...`);
 
@@ -923,7 +923,7 @@ async function checkTls(hostname: string, port: number, onLog: LogFn): Promise<R
 // 4. WHOIS — domain registration intelligence
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function checkWhois(hostname: string, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkWhois(hostname: string, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   // Extract root domain (e.g. sub.example.com → example.com)
   const parts = hostname.split(".");
@@ -1006,7 +1006,7 @@ async function checkWhois(hostname: string, onLog: LogFn): Promise<RealFinding[]
 // 5. SUBDOMAIN DISCOVERY — crt.sh certificate transparency
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function discoverSubdomains(hostname: string, onLog: LogFn): Promise<{ subs: string[]; findings: RealFinding[] }> {
+export async function discoverSubdomains(hostname: string, onLog: LogFn): Promise<{ subs: string[]; findings: RealFinding[] }> {
   const findings: RealFinding[] = [];
   const subs: string[] = [];
 
@@ -1136,7 +1136,7 @@ async function discoverSubdomains(hostname: string, onLog: LogFn): Promise<{ sub
 // 6. IP GEOLOCATION & ASN — ipinfo.io (free, no auth required)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function getIpInfo(hostname: string, onLog: LogFn): Promise<void> {
+export async function getIpInfo(hostname: string, onLog: LogFn): Promise<void> {
   try {
     const ips = await digQuery(hostname, "A");
     if (ips.length === 0) return;
@@ -1153,7 +1153,7 @@ async function getIpInfo(hostname: string, onLog: LogFn): Promise<void> {
 // 7. WAYBACK MACHINE — historical endpoint discovery
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function checkWayback(hostname: string, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkWayback(hostname: string, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Querying Wayback Machine CDX API for historical endpoints...`);
 
@@ -1215,7 +1215,7 @@ async function checkWayback(hostname: string, onLog: LogFn): Promise<RealFinding
 // 8. HTTP SECURITY HEADERS — comprehensive check
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function checkHeaders(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkHeaders(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   const r = await probe(target.url, { timeoutMs: 12_000 });
   if (!r) {
@@ -1500,7 +1500,7 @@ async function checkHeaders(target: Target, onLog: LogFn): Promise<RealFinding[]
 
 interface TechProfile { name: string; version?: string; category: string; }
 
-async function fingerprint(target: Target, onLog: LogFn): Promise<{ techs: TechProfile[]; findings: RealFinding[] }> {
+export async function fingerprint(target: Target, onLog: LogFn): Promise<{ techs: TechProfile[]; findings: RealFinding[] }> {
   const techs: TechProfile[] = [];
   const findings: RealFinding[] = [];
   const r = await probe(target.url);
@@ -1709,7 +1709,7 @@ const SENSITIVE_PATHS: { path: string; deep?: boolean; finding: Omit<RealFinding
   { path: "/.ssh/id_rsa",         finding: { title: "SSH Private Key Exposed (.ssh/id_rsa)", severity: "critical", cvss: 10.0, cve: null, description: "SSH private key at .ssh/id_rsa is publicly accessible.", remediation: "Remove immediately and rotate all SSH key pairs." } },
 ];
 
-async function checkSensitivePaths(target: Target, deep: boolean, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkSensitivePaths(target: Target, deep: boolean, onLog: LogFn): Promise<RealFinding[]> {
   const paths = SENSITIVE_PATHS.filter((p) => !p.deep || deep);
   await onLog(`[${ts()}] Probing ${paths.length} sensitive paths...`);
 
@@ -1810,7 +1810,7 @@ const SQLI_PATTERNS = [
   /division by zero/i,
 ];
 
-async function checkWebApp(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkWebApp(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
 
   // ── SQLi error detection ──────────────────────────────────────────────────
@@ -2192,7 +2192,7 @@ async function checkWebApp(target: Target, onLog: LogFn): Promise<RealFinding[]>
 // 12. API SURFACE DISCOVERY
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function checkApiSurface(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkApiSurface(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Probing API documentation and management endpoints...`);
 
@@ -2487,7 +2487,7 @@ const TAKEOVER_FINGERPRINTS: Array<{ service: string; cnamePattern: RegExp; indi
   { service: "WordPress.com",  cnamePattern: /wordpress\.com$/i,       indicator: "do you want to register" },
 ];
 
-async function checkSubdomainTakeover(subdomains: string[], onLog: LogFn): Promise<RealFinding[]> {
+export async function checkSubdomainTakeover(subdomains: string[], onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   if (subdomains.length === 0) return findings;
   const toCheck = subdomains.slice(0, 40);
@@ -2526,7 +2526,7 @@ async function checkSubdomainTakeover(subdomains: string[], onLog: LogFn): Promi
 // HOST HEADER INJECTION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function checkHostHeaderInjection(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkHostHeaderInjection(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Testing host header injection...`);
   const injectedHost = "evil-sentinelx-bypass.attacker.example";
@@ -2562,7 +2562,7 @@ async function checkHostHeaderInjection(target: Target, onLog: LogFn): Promise<R
 // CRLF INJECTION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function checkCrlfInjection(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkCrlfInjection(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Testing CRLF injection (HTTP response splitting)...`);
 
@@ -2617,7 +2617,7 @@ const JWT_WEAK_SECRETS = [
   "qwerty", "abc123", "test", "dev", "production",
 ];
 
-async function checkJwtWeaknesses(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkJwtWeaknesses(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Checking JWT exposure and algorithm weaknesses...`);
 
@@ -2826,7 +2826,7 @@ async function checkJwtAdvanced(
 // PATH TRAVERSAL
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function checkPathTraversal(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkPathTraversal(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Testing path traversal / directory traversal...`);
 
@@ -2883,7 +2883,7 @@ async function checkPathTraversal(target: Target, onLog: LogFn): Promise<RealFin
 // LOG4SHELL / SPRING4SHELL SURFACE DETECTION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function checkLog4ShellSurface(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkLog4ShellSurface(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Testing Log4Shell (CVE-2021-44228) / Spring4Shell (CVE-2022-22965) surface...`);
 
@@ -2946,7 +2946,7 @@ async function checkLog4ShellSurface(target: Target, onLog: LogFn): Promise<Real
 // RATE LIMITING ABSENCE ON AUTH ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function checkRateLimiting(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkRateLimiting(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] Checking for rate limiting on authentication endpoints...`);
 
@@ -2997,7 +2997,7 @@ async function checkRateLimiting(target: Target, onLog: LogFn): Promise<RealFind
 // PHASE 18: ACCESS CONTROL / IDOR DETECTION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function checkIdorAndBola(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkIdorAndBola(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] [Phase 18] Access Control / IDOR — extracting numeric IDs and testing role-escalation headers...`);
 
@@ -3088,7 +3088,7 @@ async function checkIdorAndBola(target: Target, onLog: LogFn): Promise<RealFindi
 // PHASE 19: HTTP REQUEST SMUGGLING
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function checkHttpRequestSmuggling(target: Target, onLog: LogFn): Promise<RealFinding[]> {
+export async function checkHttpRequestSmuggling(target: Target, onLog: LogFn): Promise<RealFinding[]> {
   const findings: RealFinding[] = [];
   await onLog(`[${ts()}] [Phase 19] HTTP Request Smuggling — testing CL.TE and TE.CL desynchronization...`);
 
@@ -3149,14 +3149,18 @@ async function checkHttpRequestSmuggling(target: Target, onLog: LogFn): Promise<
     },
   ];
 
-  // Get baseline timing
+  // Establish a healthy baseline before sending ambiguous HTTP/1.1 frames.
+  // CDN 4xx/5xx responses and slow origins are not useful smuggling evidence.
   if (!activeProbesAllowed()) return findings;
-  if (!reserveScanRequest()) return findings;
   const baselineStart = Date.now();
   const baselineR = await probe(target.url, { timeoutMs: 6_000 });
   const baselineMs = Date.now() - baselineStart;
   if (!baselineR) {
     await onLog(`[${ts()}] Smuggling: baseline request failed — skipping`);
+    return findings;
+  }
+  if (baselineMs > 500 || baselineR.status < 200 || baselineR.status >= 400) {
+    await onLog(`[${ts()}] Smuggling: baseline unsuitable (HTTP ${baselineR.status}, ${baselineMs}ms) — skipping`);
     return findings;
   }
 
@@ -3205,15 +3209,23 @@ async function checkHttpRequestSmuggling(target: Target, onLog: LogFn): Promise<
     });
 
     if (!result.status) continue;
-    const isAnomaly = result.status === 400 || result.status === 500 || result.status === 501;
+    const statusChanged = result.status !== baselineR.status;
     const timingAnomaly = result.durationMs > baselineMs + 2000;
-    if (isAnomaly || timingAnomaly) {
+    let confirmedDesync = false;
+    if (statusChanged) {
+      // A CDN commonly returns 400/501 for malformed requests. Repeat a normal
+      // request and only treat a stable, changed smuggling response as a
+      // desync signal rather than a generic malformed-request rejection.
+      const followup = await probe(target.url, { timeoutMs: 6_000 });
+      confirmedDesync = Boolean(followup && followup.status !== baselineR.status && followup.status === result.status);
+    }
+    if ((timingAnomaly && statusChanged) || confirmedDesync) {
       findings.push({
         title: `Potential HTTP Request Smuggling — ${label}`,
         severity: "critical", verification: "suspected", confidence: 55,
         cvss: 9.8, cve: null,
-        description: `An ambiguous HTTP request with both Content-Length and Transfer-Encoding headers produced an anomalous response (HTTP ${result.status}, ${result.durationMs}ms vs baseline ${baselineMs}ms). This may indicate the server processes CL/TE desynchronization differently from a front-end proxy, enabling request smuggling attacks.`,
-        evidence: `Baseline: GET ${target.url} → HTTP ${baselineR.status} (${baselineMs}ms)\n${label}: POST → HTTP ${result.status} (${result.durationMs}ms)\nTiming anomaly: ${timingAnomaly} | Status anomaly: ${isAnomaly}\nPayload snippet: ${raw.slice(0, 200)}`,
+         description: `An ambiguous HTTP request with both Content-Length and Transfer-Encoding headers produced a response that differed from a healthy baseline (HTTP ${result.status}, ${result.durationMs}ms vs baseline ${baselineR.status}, ${baselineMs}ms). The signal met a timing-plus-status or repeat-response desynchronization threshold.`,
+         evidence: `Baseline: GET ${target.url} → HTTP ${baselineR.status} (${baselineMs}ms)\n${label}: POST → HTTP ${result.status} (${result.durationMs}ms)\nTiming anomaly: ${timingAnomaly} | Status changed: ${statusChanged} | Repeat response confirmed: ${confirmedDesync}\nPayload snippet: ${raw.slice(0, 200)}`,
         remediation: "Ensure front-end and back-end servers agree on how to handle ambiguous Content-Length/Transfer-Encoding. Normalise all requests at the load balancer. Disable HTTP/1.1 keep-alive if not needed. Use HTTP/2 end-to-end.",
       });
       await onLog(`[${ts()}] ⚠ HTTP SMUGGLING SIGNAL: ${label} → HTTP ${result.status} in ${result.durationMs}ms`);

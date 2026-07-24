@@ -6,7 +6,7 @@
  * completes. Findings are written to the database as they are detected.
  */
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   db,
   scansTable,
@@ -15,12 +15,19 @@ import {
   assetsTable,
   projectsTable,
 } from "@workspace/db";
-import { discoverToolCapabilities, resolveScanPolicy, scanTarget, type ScanType } from "./scanner";
-import { decryptAuthHeaders } from "./auth-context";
+import { discoverToolCapabilities, resolveScanPolicy, scanTarget, type ScanType } from "./scanner/index";
+import { decryptAuthHeaders } from "./encryption";
 import { logger } from "./logger";
 
 const TICK_MS = 2_000; // keep the queue responsive without busy-polling the database
 const SCANNER_PHASE_COUNT = 23;
+
+class ScanCanceledError extends Error {
+  constructor() {
+    super("Scan canceled by user");
+    this.name = "ScanCanceledError";
+  }
+}
 
 // Track scans currently being processed to avoid double-pickup
 const activeScans = new Set<number>();
@@ -85,10 +92,22 @@ async function setProgress(scanId: number, progress: number): Promise<void> {
     .where(eq(scansTable.id, scanId));
 }
 
+async function throwIfCanceled(scanId: number): Promise<void> {
+  const [scan] = await db
+    .select({ status: scansTable.status, cancelRequested: scansTable.cancelRequested })
+    .from(scansTable)
+    .where(eq(scansTable.id, scanId));
+  if (scan?.status === "canceled" || scan?.cancelRequested) {
+    throw new ScanCanceledError();
+  }
+}
+
 // ─── Core scan processor ──────────────────────────────────────────────────────
 
 async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> {
+  await throwIfCanceled(scan.id);
   const log = async (msg: string) => {
+    await throwIfCanceled(scan.id);
     await appendLog(scan.id, msg);
   };
 
@@ -118,7 +137,9 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
       policy: JSON.stringify(policy),
       toolCapabilities: capabilityJson,
     })
-    .where(eq(scansTable.id, scan.id));
+    .where(and(eq(scansTable.id, scan.id), eq(scansTable.status, "pending")));
+
+  await throwIfCanceled(scan.id);
 
   // Load assets for this project
   const assets = await db
@@ -144,10 +165,11 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
 
   if (assets.length === 0) {
     await log(`[${new Date().toISOString()}] No assets found for this project. Add assets (domains, IPs, API endpoints) to enable scanning.`);
+    await throwIfCanceled(scan.id);
     await db
       .update(scansTable)
       .set({ status: "completed", progress: 100, completedAt: new Date(), findingsCount: 0 })
-      .where(eq(scansTable.id, scan.id));
+      .where(and(eq(scansTable.id, scan.id), eq(scansTable.cancelRequested, false)));
     activeScans.delete(scan.id);
     return;
   }
@@ -158,6 +180,7 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
   const seenTitles = new Set<string>(); // deduplicate same finding across assets
 
   for (const asset of assets) {
+    await throwIfCanceled(scan.id);
     await log(`[${new Date().toISOString()}] Scanning asset: ${asset.value} (${asset.type})`);
 
     // Decrypt auth headers if the scan has an auth context stored
@@ -177,6 +200,7 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
       asset.type,
       scan.type as ScanType,
       async (msg) => {
+        await throwIfCanceled(scan.id);
         await log(msg);
         // Scanner logs carry the authoritative phase number. Use it for
         // progress so long-running phases (notably nmap) do not look frozen.
@@ -249,10 +273,11 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
   }
 
   // ── Completion ────────────────────────────────────────────────────────────
+  await throwIfCanceled(scan.id);
   await log(`[${new Date().toISOString()}] Scan complete — ${totalFindingsAdded} finding(s) recorded.`);
   await setProgress(scan.id, 100);
 
-  await db
+  const [completedScan] = await db
     .update(scansTable)
     .set({
       status: "completed",
@@ -261,7 +286,9 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
       findingsCount: totalFindingsAdded,
       wafBlocked,
     })
-    .where(eq(scansTable.id, scan.id));
+    .where(and(eq(scansTable.id, scan.id), eq(scansTable.cancelRequested, false)))
+    .returning({ id: scansTable.id });
+  if (!completedScan) throw new ScanCanceledError();
 
   // Log activity
   const [project] = await db
@@ -297,11 +324,24 @@ async function pickUpPendingScans(): Promise<void> {
     // Run each scan as a detached async task so the worker loop stays free
     processScan(scan)
       .catch((err) => {
+        if (err instanceof ScanCanceledError) {
+          db.update(scansTable)
+            .set({
+              status: "canceled",
+              cancelRequested: false,
+              completedAt: new Date(),
+              logs: sql`COALESCE(${scansTable.logs}, '') || ${`[${new Date().toISOString()}] Scan canceled by user.\n`}`,
+            })
+            .where(eq(scansTable.id, scan.id))
+            .catch(() => {});
+          return;
+        }
         logger.error({ scanId: scan.id, err }, "Scan failed");
         // Mark the scan as failed so the dashboard can explain what happened
         db.update(scansTable)
           .set({
             status: "failed",
+            cancelRequested: false,
             completedAt: new Date(),
             logs: sql`COALESCE(${scansTable.logs}, '') || ${`[${new Date().toISOString()}] Scan failed: ${err?.message ?? String(err)}\n`}`,
           })
@@ -329,6 +369,7 @@ async function recoverInterruptedScans(): Promise<void> {
         progress: 0,
         completedAt: null,
         wafBlocked: false,
+        cancelRequested: false,
         logs: sql`COALESCE(${scansTable.logs}, '') || ${`[${new Date().toISOString()}] API worker restarted; scan queued for safe recovery.\n`}`,
       })
       .where(eq(scansTable.id, scan.id));

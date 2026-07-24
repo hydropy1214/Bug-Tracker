@@ -45,6 +45,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; 
   running:   { label: "Executing", color: "text-primary",     bg: "bg-primary/10",     border: "border-primary/40",     dot: "bg-primary",     pulse: true },
   completed: { label: "Completed", color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/25", dot: "bg-emerald-400" },
   failed:    { label: "Failed",    color: "text-red-400",     bg: "bg-red-500/10",     border: "border-red-500/25",     dot: "bg-red-400" },
+  canceled:  { label: "Canceled",  color: "text-muted-foreground", bg: "bg-muted/10", border: "border-border", dot: "bg-muted-foreground" },
 };
 
 function StatusBadge({ status }: { status: string }) {

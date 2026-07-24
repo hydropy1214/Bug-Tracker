@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer, real } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, real, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { projectsTable } from "./projects";
@@ -32,7 +32,12 @@ export const findingsTable = pgTable("findings", {
   remediation: text("remediation"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (table) => ({
+  scanIdIdx: index("findings_scan_id_idx").on(table.scanId),
+  projectIdIdx: index("findings_project_id_idx").on(table.projectId),
+  assetIdIdx: index("findings_asset_id_idx").on(table.assetId),
+  statusIdx: index("findings_status_idx").on(table.status),
+}));
 
 export const insertFindingSchema = createInsertSchema(findingsTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertFinding = z.infer<typeof insertFindingSchema>;

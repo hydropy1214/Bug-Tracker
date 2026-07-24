@@ -471,6 +471,7 @@ export const ScanStatus = {
   running: 'running',
   completed: 'completed',
   failed: 'failed',
+  canceled: 'canceled',
 } as const;
 
 export interface Scan {
@@ -491,6 +492,7 @@ export interface Scan {
   progress?: number;
   findingsCount?: number;
   wafBlocked?: boolean;
+  cancelRequested?: boolean;
   /** @nullable */
   startedAt?: string | null;
   /** @nullable */

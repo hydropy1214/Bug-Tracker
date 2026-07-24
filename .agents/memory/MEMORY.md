@@ -2,3 +2,4 @@
 - [SentinelX scanner upgrades](sentinelx-scanner-upgrades.md) — 23-phase scanner; SSTI hardened with canary + dual-math; SQLi extended (30+ patterns, boolean, JSON/cookie/header injection); JWT advanced suite (25 secrets, JKU, RS256→HS256, empty sig); IDOR Phase 18; HTTP Smuggling Phase 19; CORS active attacker.com test; auth headers in scanContext; compliance mapping (OWASP/PCI/NIST); risk grade in executive summary; budget 8000
 - [SentinelX WAF handling](sentinelx-waf.md) — challenge state is asset-scoped; active probes stop, SSTI/NoSQL signals suppress, and remaining findings become informational
 - [SentinelX scan recovery](sentinelx-recovery.md) — restart recovery, browser rehydration, and database-side monotonic progress keep scans resumable and truthful
+- [SentinelX refactor boundaries](sentinelx-refactor.md) — scanner extraction stays compatibility-first; cancellation is a database-backed terminal state

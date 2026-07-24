@@ -8,8 +8,8 @@
 
 import { Router, type IRouter } from "express";
 import { db, projectsTable, assetsTable, scansTable, activityTable } from "@workspace/db";
-import { resolveScanPolicy, type ScanProfile } from "../lib/scanner";
-import { encryptAuthHeaders } from "../lib/auth-context";
+import { resolveScanPolicy, type ScanProfile } from "../lib/scanner/index";
+import { encryptAuthHeaders } from "../lib/encryption";
 
 const router: IRouter = Router();
 

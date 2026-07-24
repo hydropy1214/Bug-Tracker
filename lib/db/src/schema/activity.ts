@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { projectsTable } from "./projects";
@@ -12,7 +12,10 @@ export const activityTable = pgTable("activity", {
   projectId: integer("project_id").references(() => projectsTable.id, { onDelete: "cascade" }),
   projectName: text("project_name"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => ({
+  projectIdIdx: index("activity_project_id_idx").on(table.projectId),
+  createdAtIdx: index("activity_created_at_idx").on(table.createdAt),
+}));
 
 export const insertActivitySchema = createInsertSchema(activityTable).omit({ id: true, createdAt: true });
 export type InsertActivity = z.infer<typeof insertActivitySchema>;

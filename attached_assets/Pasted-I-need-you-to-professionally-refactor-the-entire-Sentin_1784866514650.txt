@@ -1,0 +1,105 @@
+I need you to professionally refactor the entire SentinelX codebase. Keep all existing functionality exactly as it is — every scan phase, every API route, every UI component must work unchanged after the refactor. Only improve the internal structure, eliminate duplication, and fix known false-positive issues.
+
+## 1. Modularize the scan engine (scanner.ts)
+
+Currently, scanner.ts is a single file of ~2600 lines containing all 22 phases, WAF detection, subdomain takeover, JWT checks, etc. Split it into separate modules under a new directory `artifacts/api-server/src/lib/scanner/`:
+
+- `index.ts` — re-exports `scanTarget()` and types, remains the main orchestrator.
+- `phases/dns.ts` — DNS enumeration (phase 2).
+- `phases/whois.ts` — WHOIS lookup (phase 4).
+- `phases/subdomains.ts` — subdomain discovery + takeover (phases 5/5b).
+- `phases/ports.ts` — nmap port scan (phase 6).
+- `phases/tls.ts` — TLS analysis (phase 7).
+- `phases/headers.ts` — security header checks (phase 8).
+- `phases/tech-fingerprint.ts` — technology fingerprinting (phase 9).
+- `phases/sensitive-paths.ts` — sensitive path discovery (phase 10).
+- `phases/wayback.ts` — Wayback Machine (phase 11).
+- `phases/webapp-probes.ts` — SQLi, XSS, NoSQL, CMDi, redirects, HTTP methods (phase 12).
+- `phases/api-surface.ts` — GraphQL, Swagger, Actuator (phase 13).
+- `phases/host-header.ts` — host header injection (phase 14).
+- `phases/crlf.ts` — CRLF injection (phase 15).
+- `phases/path-traversal.ts` — path traversal (phase 16).
+- `phases/jwt.ts` — JWT checks (phase 17).
+- `phases/idor.ts` — IDOR / access control (phase 18).
+- `phases/request-smuggling.ts` — HTTP request smuggling (phase 19).
+- `phases/log4shell.ts` — Log4Shell/Spring4Shell (phase 20).
+- `phases/rate-limiting.ts` — rate limiting check (phase 21).
+- `phases/advanced-probes.ts` — SSTI, XXE, SSRF, deserialization, deep CMDi, deep NoSQL (phase 22).
+- `phases/cve-lookup.ts` — CVE lookup (phase 23).
+
+Also extract shared utilities from the old scanner.ts into:
+- `lib/scanner/utils/waf.ts` — `isWafOrRateLimit()` function (used by all phases).
+- `lib/scanner/utils/http.ts` — unified `probe()` fetch wrapper with timeout, retries, cookie handling.
+- `lib/scanner/utils/findings.ts` — helper to create `RealFinding` objects with consistent audit fields.
+
+The main `scanTarget()` function should import and call each phase in order, passing the `Target`, `ScanPolicy`, and `ScanContext` (accumulated findings, logs, request budget) between phases.
+
+## 2. Refactor vuln-probes.ts
+
+Current `vuln-probes.ts` contains `checkSSTI`, `checkXXE`, `checkSSRF`, `checkDeserialization`, `checkCommandInjection`, `checkNoSqlInjection`, and `lookupCvesForTechs`. Move each check to its own file under a new `lib/scanner/phases/` directory (or under advanced-probes subdirectory):
+
+- `advanced/ssti.ts` — with the **fixed SSTI logic**: payload reflection check, proximity matching, unique canary, multi-math verification, dynamic content filter. No false positives from Cloudflare/Ray IDs.
+- `advanced/xxe.ts`
+- `advanced/ssrf.ts`
+- `advanced/deserialization.ts`
+- `advanced/command-injection.ts`
+- `advanced/nosql-injection.ts`
+
+In the SSTI module, implement the false-positive elimination we discussed:
+- Before flagging, check if the injected payload (e.g., `{{7*7}}`) is actually present in the response body. If not, do not report.
+- Use a proximity check: look for the result `49` within 200 characters of the reflected payload.
+- Send a unique canary `{{'SENTINELX_SSTI_CONFIRM'}}` and only mark VERIFIED if that exact string appears.
+- For math payloads, send a second distinct expression `{{8*8}}` and verify the result changes accordingly.
+- If response status is 429 or 403 with WAF markers, skip the parameter entirely.
+
+## 3. Fix HTTP Request Smuggling false positives
+
+In `phases/request-smuggling.ts`:
+- Before running smuggling probes, send a baseline GET request.
+- If `isWafOrRateLimit()` returns true, skip the smuggling phase.
+- Also skip if the baseline response time > 500ms or status is not 2xx/3xx.
+- For smuggling detection, do not flag a simple 400/501 response from a CDN as smuggling — require either a timing anomaly > 2 seconds AND a status change, or a confirmed desync (different response when re-requesting).
+- Currently the scanner flags whenever status or time differs slightly — that's the cause of all false positives. Fix this.
+
+## 4. Refactor the React frontend (artifacts/sentinelx)
+
+- Extract the large `Dashboard.tsx` scan engine page into smaller components: `ScanForm`, `LiveTerminal`, `FindingCard`, `FindingsList`, `RiskSummary`.
+- Move API calls to a dedicated `hooks/` directory using TanStack Query (already partially set up). Create hooks: `useScanStatus`, `useCreateScan`, `useFindings`, etc.
+- Create a shared `types/` folder for frontend-specific types derived from the API spec.
+- Improve the settings page with configuration options for scan profiles (budget, timeout, tools).
+- Ensure the WAF-blocked indicator is displayed when a scan returns `wafBlocked: true` (from future API response).
+
+## 5. Backend API and routes refactoring
+
+- The Express routes in `artifacts/api-server/src/routes/` are fine but could be cleaned up with a shared error handler middleware.
+- Add a `POST /api/scans/:id/stop` endpoint to cancel a running scan gracefully.
+- Add a field `wafBlocked` to the scan status response if the target is behind a WAF that could not be bypassed.
+- Ensure all routes validate input with Zod schemas (reuse the generated schemas from `lib/api-zod`).
+- Move the `auth-context.ts` encryption logic into a dedicated `lib/encryption.ts` and use it consistently.
+
+## 6. Shared library improvements
+
+- In `lib/db`, ensure all tables have proper indexes for performance (e.g., on `scanId`, `projectId`).
+- Add database migration support for any future schema changes.
+- The `lib/api-spec` OpenAPI spec should be updated to reflect any new endpoints (like `stop`).
+
+## 7. Tooling and code quality
+
+- Add a `.eslintrc.js` at the root with TypeScript rules.
+- Add a `prettier.config.js` for consistent formatting.
+- Update the root `package.json` with scripts: `lint`, `format`, `typecheck`.
+- Ensure all code uses `import type` where appropriate to reduce bundle size.
+- Add JSDoc comments to all exported functions and interfaces.
+
+## 8. Integration testing
+
+After the refactoring, verify that:
+- A full scan on `https://www.voxbeam.com` still produces the same findings (Open Redirect, GraphQL, Directory Listing, etc.) with zero false smuggling positives.
+- The WAF bypass detection still works (origin IP bypass on `manage.flowroute.com`).
+- The SSTI module does NOT flag SSTI on Cloudflare-protected domains (like earlier false positives).
+
+Make all changes incrementally. Do not break the build. After each module extraction, ensure the import paths are correct and the project compiles.
+
+Start by creating the directory structure and moving phase logic into separate files, updating imports in `scanTarget()`. Then refactor the frontend, then the routes.
+
+This is a large refactoring task. Please complete it fully, and output a summary of changes made when finished.

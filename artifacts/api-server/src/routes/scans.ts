@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 import { db, scansTable, activityTable, projectsTable, findingsTable, assetsTable } from "@workspace/db";
-import { resolveScanPolicy } from "../lib/scanner";
-import { encryptAuthHeaders } from "../lib/auth-context";
+import { resolveScanPolicy } from "../lib/scanner/index";
+import { encryptAuthHeaders } from "../lib/encryption";
 import {
   ListScansParams,
   CreateScanParams,
@@ -165,6 +165,51 @@ router.get("/scans/:id", async (req, res): Promise<void> => {
 
   if (!scan) {
     res.status(404).json({ error: "Scan not found" });
+    return;
+  }
+
+  res.json(scan);
+});
+
+router.post("/scans/:id/stop", async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const params = GetScanParams.safeParse({ id: parseInt(raw, 10) });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const [scan] = await db
+    .select()
+    .from(scansTable)
+    .where(eq(scansTable.id, params.data.id));
+  if (!scan) {
+    res.status(404).json({ error: "Scan not found" });
+    return;
+  }
+
+  if (scan.status === "pending") {
+    const [canceled] = await db
+      .update(scansTable)
+      .set({
+        status: "canceled",
+        cancelRequested: false,
+        completedAt: new Date(),
+        logs: sql`COALESCE(${scansTable.logs}, '') || ${`[${new Date().toISOString()}] Scan canceled before execution.\n`}`,
+      })
+      .where(eq(scansTable.id, scan.id))
+      .returning();
+    res.json(canceled ?? { ...scan, status: "canceled" });
+    return;
+  }
+
+  if (scan.status === "running") {
+    const [updated] = await db
+      .update(scansTable)
+      .set({ cancelRequested: true })
+      .where(eq(scansTable.id, scan.id))
+      .returning();
+    res.json(updated ?? { ...scan, cancelRequested: true });
     return;
   }
 

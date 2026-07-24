@@ -518,10 +518,11 @@ export const ListScansResponseItem = zod.object({
   "profile": zod.enum(['passive', 'safe_active', 'deep_authorized', 'authenticated', 'lab']).optional(),
   "policy": zod.string().nullish(),
   "toolCapabilities": zod.string().nullish(),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed']),
+  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'canceled']),
   "progress": zod.number().min(listScansResponseProgressMin).max(listScansResponseProgressMax).optional(),
   "findingsCount": zod.number().optional(),
   "wafBlocked": zod.boolean().optional(),
+  "cancelRequested": zod.boolean().optional(),
   "startedAt": zod.coerce.date().nullish(),
   "completedAt": zod.coerce.date().nullish(),
   "createdAt": zod.coerce.date(),
@@ -560,10 +561,11 @@ export const CreateScanResponse = zod.object({
   "profile": zod.enum(['passive', 'safe_active', 'deep_authorized', 'authenticated', 'lab']).optional(),
   "policy": zod.string().nullish(),
   "toolCapabilities": zod.string().nullish(),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed']),
+  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'canceled']),
   "progress": zod.number().min(createScanResponseProgressMin).max(createScanResponseProgressMax).optional(),
   "findingsCount": zod.number().optional(),
   "wafBlocked": zod.boolean().optional(),
+  "cancelRequested": zod.boolean().optional(),
   "startedAt": zod.coerce.date().nullish(),
   "completedAt": zod.coerce.date().nullish(),
   "createdAt": zod.coerce.date(),
@@ -591,10 +593,43 @@ export const GetScanResponse = zod.object({
   "profile": zod.enum(['passive', 'safe_active', 'deep_authorized', 'authenticated', 'lab']).optional(),
   "policy": zod.string().nullish(),
   "toolCapabilities": zod.string().nullish(),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed']),
+  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'canceled']),
   "progress": zod.number().min(getScanResponseProgressMin).max(getScanResponseProgressMax).optional(),
   "findingsCount": zod.number().optional(),
   "wafBlocked": zod.boolean().optional(),
+  "cancelRequested": zod.boolean().optional(),
+  "startedAt": zod.coerce.date().nullish(),
+  "completedAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date(),
+  "logs": zod.string().nullish()
+})
+
+
+/**
+ * @summary Stop a pending or running scan
+ */
+export const StopScanParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const stopScanResponseProgressMin = 0;
+export const stopScanResponseProgressMax = 100;
+
+
+
+export const StopScanResponse = zod.object({
+  "id": zod.number(),
+  "projectId": zod.number(),
+  "name": zod.string(),
+  "type": zod.enum(['recon', 'enumeration', 'vulnerability', 'full']).optional(),
+  "profile": zod.enum(['passive', 'safe_active', 'deep_authorized', 'authenticated', 'lab']).optional(),
+  "policy": zod.string().nullish(),
+  "toolCapabilities": zod.string().nullish(),
+  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'canceled']),
+  "progress": zod.number().min(stopScanResponseProgressMin).max(stopScanResponseProgressMax).optional(),
+  "findingsCount": zod.number().optional(),
+  "wafBlocked": zod.boolean().optional(),
+  "cancelRequested": zod.boolean().optional(),
   "startedAt": zod.coerce.date().nullish(),
   "completedAt": zod.coerce.date().nullish(),
   "createdAt": zod.coerce.date(),

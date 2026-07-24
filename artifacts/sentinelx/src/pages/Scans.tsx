@@ -18,7 +18,7 @@ import {
 import { motion } from "framer-motion";
 import { cn, formatDate } from "@/lib/utils";
 
-type ScanStatus = "pending" | "running" | "completed" | "failed";
+type ScanStatus = "pending" | "running" | "completed" | "failed" | "canceled";
 type FilterValue = "all" | "active" | "completed" | "failed";
 
 interface ScanSummary {
@@ -66,6 +66,7 @@ const STATUS: Record<ScanStatus, {
   running: { label: "Live", color: "text-primary", bg: "bg-primary/10", border: "border-primary/30", dot: "bg-primary" },
   completed: { label: "Completed", color: "text-emerald-300", bg: "bg-emerald-500/10", border: "border-emerald-500/30", dot: "bg-emerald-300" },
   failed: { label: "Failed", color: "text-red-300", bg: "bg-red-500/10", border: "border-red-500/30", dot: "bg-red-300" },
+  canceled: { label: "Canceled", color: "text-muted-foreground", bg: "bg-muted/10", border: "border-border", dot: "bg-muted-foreground" },
 };
 
 const SEVERITY: Record<string, string> = {

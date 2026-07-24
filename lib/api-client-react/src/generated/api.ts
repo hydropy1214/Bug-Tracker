@@ -1550,6 +1550,77 @@ export function useGetScan<TData = Awaited<ReturnType<typeof getScan>>, TError =
 
 
 
+export const getStopScanUrl = (id: number,) => {
+
+
+
+
+  return `/api/scans/${id}/stop`
+}
+
+/**
+ * @summary Stop a pending or running scan
+ */
+export const stopScan = async (id: number, options?: RequestInit): Promise<Scan> => {
+
+  return customFetch<Scan>(getStopScanUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getStopScanMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopScan>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof stopScan>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['stopScan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof stopScan>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  stopScan(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StopScanMutationResult = NonNullable<Awaited<ReturnType<typeof stopScan>>>
+
+    export type StopScanMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Stop a pending or running scan
+ */
+export const useStopScan = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopScan>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof stopScan>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getStopScanMutationOptions(options));
+    }
+
 export const getGetDashboardStatsUrl = () => {
 
 
