@@ -20,7 +20,7 @@ import { decryptAuthHeaders } from "./encryption";
 import { logger } from "./logger";
 
 const TICK_MS = 2_000; // keep the queue responsive without busy-polling the database
-const SCANNER_PHASE_COUNT = 23;
+const SCANNER_PHASE_COUNT = 24;
 
 class ScanCanceledError extends Error {
   constructor() {
@@ -159,7 +159,7 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
   };
 
   await log(`[${new Date().toISOString()}] Scan initialised — type: ${scan.type}, profile: ${policy.profile}, assets: ${assets.length}`);
-  await log(`[${new Date().toISOString()}] Policy: ${policy.requestBudget} request budget · ${policy.timeoutMs}ms timeout · ${policy.maxConcurrency} concurrency`);
+  await log(`[${new Date().toISOString()}] Policy: ${policy.requestBudget} request budget · ${policy.verificationRequestBudget} verification request cap · ${policy.timeoutMs}ms timeout · ${policy.maxConcurrency} concurrency`);
   await log(`[${new Date().toISOString()}] Tools available: ${capabilities.filter((tool) => tool.available).map((tool) => `${tool.name}${tool.version ? ` (${tool.version})` : ""}`).join(", ") || "built-in HTTP only"}`);
   await log(`[${new Date().toISOString()}] Tools unavailable: ${capabilities.filter((tool) => !tool.available).map((tool) => tool.name).join(", ") || "none"}`);
 
@@ -249,6 +249,9 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
         description: finding.description,
         severity: finding.severity,
         verification: finding.verification ?? "verified",
+        // `verified` is reserved for direct evidence from bounded Phase 24
+        // verification; legacy scanner metadata must not imply canary proof.
+        verified: finding.verified ?? false,
         confidence: Math.max(0, Math.min(100, Math.round(finding.confidence ?? 80))),
         evidenceQuality: finding.evidenceQuality ?? "standard",
         verificationMethod: finding.verificationMethod ?? null,

@@ -36,6 +36,8 @@ export {
   normalizeTarget,
   noteWafChallengeDetected,
   remainingScanRequests,
+  remainingVerificationRequests,
+  reserveVerificationRequest,
   reserveScanRequest,
   resolveScanPolicy,
   runActiveChecks,

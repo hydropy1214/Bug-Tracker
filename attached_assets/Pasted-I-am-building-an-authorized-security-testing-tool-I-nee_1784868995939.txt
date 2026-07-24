@@ -1,0 +1,74 @@
+I am building an authorized security testing tool. I need to upgrade the scanner with an advanced vulnerability validation engine that safely confirms the presence of high-severity issues without causing damage. The scanner already detects potential vulnerabilities; now it must automatically verify them using safe canary tokens and provide proof-of-concept evidence.
+
+## PART 0 – ENHANCED WAF/DEFENSE DETECTION
+
+Improve the existing Phase 1 (WAF/CDN detection) to more reliably identify when the target is behind a protective service that would interfere with active verification. Also strengthen origin discovery using passive techniques (DNS history, certificate transparency). All verification will only occur if the target is directly reachable or an unprotected origin is found.
+
+## PART 1 – SAFE ACTIVE VERIFICATION ENGINE (Phase 24)
+
+Create a new phase that runs only when the target is not behind a WAF/rate-limit challenge, or when an unprotected origin IP has been confirmed. The engine will safely validate each suspected vulnerability using **canary tokens** – unique, non-destructive strings that prove the issue is real without modifying any data or executing harmful commands.
+
+Create files under `lib/scanner/phases/verification/` for each module. The main orchestrator `phase-24-verification.ts` will call them sequentially.
+
+### Module 1: SQL Injection Verification
+- If error-based or blind SQLi was detected with high confidence, use a `UNION SELECT` to include a canary string in the output. Example: `' UNION SELECT 'SENTINELX_SQLI_CANARY'--`. If the canary appears in the response, flag as "Confirmed SQL Injection".
+- For blind SQLi, re-validate with multiple time delays. If consistent, flag as "Confirmed Blind SQL Injection".
+
+### Module 2: NoSQL Injection Verification
+- If operator injection (`$ne`, `$gt`) caused different responses, attempt to bypass a login form (if present) by injecting `{"$ne":""}` in the password field. If login succeeds, flag "NoSQL Authentication Bypass Confirmed".
+- If a data retrieval endpoint is injectable, use `{"$regex":".*"}` to see if more data is returned. If yes, flag "NoSQL Data Exposure".
+
+### Module 3: Command Injection Verification (Safe Execution)
+- For suspected command injection, inject a safe canary command that only prints a unique string: e.g., `; echo SENTINELX_CMDI_CANARY` (Linux) or `| cmd /c echo SENTINELX_CMDI_CANARY` (Windows). If the canary appears, flag "Command Injection Confirmed".
+- Additionally, attempt to read a harmless system file (e.g., `/etc/hostname` or `C:\Windows\win.ini`) to further prove the injection. If successful, include a snippet.
+
+### Module 4: SSTI Verification
+- If SSTI is suspected, first confirm with a multi‑math canary as previously implemented. Then, depending on the detected template engine, inject a safe canary payload that only outputs a string. Example for Jinja2: `{{ 'SENTINELX_SSTI_CANARY' }}`. If the canary is reflected, flag "SSTI Confirmed".
+- Do not attempt to execute OS commands unless the engine is specifically authorized in the scan policy.
+
+### Module 5: SSRF Verification
+- If SSRF is suspected, attempt to request a local canary endpoint or a cloud metadata URL but only to observe if a connection is made. Use a known canary in the response (e.g., fetch `http://127.0.0.1:80/` and look for expected banner). If the response indicates an internal service was reached, flag "SSRF Confirmed".
+
+### Module 6: Path Traversal Verification
+- Attempt to read a standard system file (`/etc/passwd` or `C:\Windows\win.ini`). If successful, flag "Path Traversal Confirmed". Include the first 100 characters as proof.
+
+### Module 7: JWT Weakness Verification
+- If JWT tokens are found, test `alg:none` bypass and common weak secrets. If any succeed in accessing a protected resource, flag "JWT Vulnerability Confirmed".
+
+### Module 8: IDOR / Access Control Verification (if a valid session is obtained)
+- If any previous step yielded a session token (from default credentials, registration, or JWT forging), use it to test for insecure direct object references by changing numeric IDs. If another user's data is returned, flag "IDOR Confirmed".
+- Also test role escalation by adding harmless headers like `X-Original-Role: admin`.
+
+### Module 9: Default Credentials Testing
+- If login forms are detected, try a small set of common credentials (admin/admin, etc.) only once per form. If login succeeds, flag "Default Credentials Work".
+- This is limited to avoid account lockout.
+
+### Module 10: Open Registration Validation
+- If a registration form is found, attempt to create a test account with fake data. If registration succeeds without CAPTCHA, flag "Open Registration Allowed".
+
+### Module 11: GraphQL Security Check
+- If GraphQL is detected, test if introspection is allowed. If yes, flag "GraphQL Introspection Enabled".
+- Test query depth limits: if a deep query (15 levels) is accepted, flag "GraphQL Depth Limit Not Enforced".
+
+### Module 12: Credential Reuse Testing (safe)
+- If credentials were discovered (e.g., from config files), test them against other services (SSH, FTP) only if those ports are open. Use safe authentication attempts that do not lock accounts.
+
+## PART 2 – EVIDENCE AND REPORTING
+
+- Every confirmed vulnerability must include the exact canary or proof (redacted) in the finding’s evidence.
+- Add a `verified` field to findings indicating they were confirmed by Phase 24.
+- The scan summary must highlight "Verified Vulnerabilities: X critical, Y high".
+
+## PART 3 – SAFETY AND POLICY
+
+- All verification payloads are pre-defined and only perform read-only actions or use canary strings.
+- The scanner respects the request budget (max 100 extra requests for verification).
+- If the target rate-limits or blocks, the verification module stops gracefully.
+- The engine only runs when `aggressive_verification` is enabled in the scan profile (default for authorized deep scans).
+
+## PART 4 – INTEGRATION
+
+- Add the new phase to `scanTarget()` after the CVE lookup phase.
+- The frontend should display a "Verifying" status during this phase.
+
+Please implement these changes while preserving all existing functionality. Start by creating the directory structure and the main orchestrator, then implement each module one by one. Ensure the code compiles and does not break existing scans.

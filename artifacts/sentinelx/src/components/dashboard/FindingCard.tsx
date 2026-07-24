@@ -45,6 +45,11 @@ export function FindingCard({ finding }: { finding: Finding }) {
               {verificationLabel(finding.verification)}
               {finding.confidence != null ? ` · ${finding.confidence}%` : ""}
             </span>
+            {finding.verified && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border text-primary border-primary/30 bg-primary/10">
+                CANARY VERIFIED
+              </span>
+            )}
             {finding.cvss > 0 && (
               <span className={cn("text-[10px] font-mono px-1.5 py-0.5 rounded border", severity.color, severity.border)}>
                 CVSS {finding.cvss.toFixed(1)}

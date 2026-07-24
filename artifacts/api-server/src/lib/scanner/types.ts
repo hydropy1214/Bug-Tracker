@@ -8,6 +8,7 @@
 export interface RealFinding {
   title: string;
   severity: "critical" | "high" | "medium" | "low";
+  verified?: boolean;
   verification?: "verified" | "version_match" | "suspected" | "informational";
   confidence?: number;
   evidenceQuality?: "weak" | "standard" | "strong";
@@ -46,11 +47,13 @@ export type ScanProfile = "passive" | "safe_active" | "deep_authorized" | "authe
 export interface ScanPolicy {
   profile: ScanProfile;
   requestBudget: number;
+  verificationRequestBudget: number;
   timeoutMs: number;
   maxConcurrency: number;
   allowDeepChecks: boolean;
   allowExternalCallbacks: boolean;
   allowToolAdapters: boolean;
+  allowVerification: boolean;
 }
 
 export interface ScanContext {

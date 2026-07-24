@@ -37,6 +37,7 @@ interface Finding {
   evidence: string;
   remediation: string;
   status: string;
+  verified?: boolean;
   verification?: "verified" | "version_match" | "suspected" | "informational";
   confidence?: number;
   evidenceQuality?: "weak" | "standard" | "strong";
@@ -112,6 +113,11 @@ function FindingCard({ finding }: { finding: Finding }) {
               {verificationLabel(finding.verification)}
               {finding.confidence != null ? ` · ${finding.confidence}%` : ""}
             </span>
+            {finding.verified && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border text-primary border-primary/30 bg-primary/10">
+                CANARY VERIFIED
+              </span>
+            )}
             {finding.cvss > 0 && (
               <span className={cn("text-[10px] font-mono px-1.5 py-0.5 rounded border", s.color, s.border)}>
                 CVSS {finding.cvss.toFixed(1)}
@@ -235,9 +241,9 @@ function SeveritySummary({ findings }: { findings: Finding[] }) {
 
 const CAPABILITIES = [
   { icon: <Globe className="w-4 h-4 text-primary" />,       title: "DNS · WHOIS · Subdomain Discovery",     desc: "dig-based DNS enumeration, crt.sh cert transparency, DNS brute-force, zone transfer, subdomain takeover detection" },
-  { icon: <Radar className="w-4 h-4 text-cyan-400" />,      title: "WAF/CDN Detection & Bypass",            desc: "Detects Cloudflare, AWS WAF, Akamai, Imperva and more; tests IP-header spoofing, Googlebot bypass, and direct origin IP access" },
+  { icon: <Radar className="w-4 h-4 text-cyan-400" />,      title: "WAF/CDN Detection",                    desc: "Detects Cloudflare, AWS WAF, Akamai, Imperva and more; suspends active probes when a challenge is detected" },
   { icon: <Server className="w-4 h-4 text-blue-400" />,     title: "Port Scanning · TLS/SSL · Services",    desc: "Full 65535-port nmap scan, openssl TLS analysis (protocols, ciphers, cert expiry), exposed dangerous services" },
-  { icon: <Bug className="w-4 h-4 text-orange-400" />,      title: "SQL · NoSQL · Command · Path Injection", desc: "Error-based and time-based blind SQLi, MongoDB operator injection, OS command injection canary, path traversal file read" },
+  { icon: <Bug className="w-4 h-4 text-orange-400" />,      title: "Safe Active Verification",              desc: "Bounded string canaries, harmless template evaluation, and read-only GraphQL introspection with redacted evidence" },
   { icon: <Zap className="w-4 h-4 text-yellow-400" />,      title: "SSTI · XXE · SSRF · Deserialization",   desc: "Arithmetic canary SSTI with RCE escalation, XXE file read, SSRF cloud metadata access, Java deserialization surface" },
   { icon: <KeyRound className="w-4 h-4 text-red-400" />,    title: "JWT Weakness · Log4Shell · Spring4Shell", desc: "alg:none bypass, weak HS256 secret cracking, missing exp claim, Log4Shell JNDI injection surface, Spring4Shell class loader" },
   { icon: <Lock className="w-4 h-4 text-emerald-400" />,    title: "Host Header · CRLF · Open Redirect",    desc: "Password-reset link poisoning, HTTP response splitting, open redirect to attacker-controlled domains" },
@@ -379,9 +385,12 @@ export function Dashboard() {
   const findings = scanData?.findings ?? [];
   const sortedFindings = [...findings].sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity));
   const logLines = (scan?.logs ?? "").split("\n").filter(Boolean);
+  const latestLog = logLines[logLines.length - 1] ?? "";
+  const isVerifying = phase === "scanning" && latestLog.includes("[Phase 24]") && !latestLog.includes("complete");
 
   const confirmedFindings = findings.filter(f => (f.verification ?? "verified") === "verified");
   const suspectedFindings = findings.filter(f => f.verification === "suspected");
+  const boundedVerifiedFindings = findings.filter(f => f.verified === true);
   const threatLevel =
     sevCount(confirmedFindings, "critical") > 0 ? { label: "CRITICAL", color: "text-red-400",    ring: "border-red-500/40",    bg: "bg-red-500/10" } :
     sevCount(confirmedFindings, "high")     > 0 ? { label: "HIGH",     color: "text-orange-400", ring: "border-orange-500/40", bg: "bg-orange-500/10" } :
@@ -400,7 +409,7 @@ export function Dashboard() {
             Scan Engine
           </h1>
           <p className="text-xs font-mono text-muted-foreground mt-1 tracking-wider uppercase">
-            Full deep scan · 21 phases · WAF bypass · zero false positives
+            Full deep scan · bounded safe verification · no exploit or credential attacks
           </p>
         </div>
         {phase !== "idle" && (
@@ -479,8 +488,10 @@ export function Dashboard() {
               <span className="text-muted-foreground">· FULL DEEP SCAN</span>
             </div>
             <div className="flex items-center gap-3">
-              {phase === "scanning" && scan.status === "running" && (
-                <span className="text-primary animate-pulse text-[10px] tracking-widest">LIVE</span>
+                {phase === "scanning" && scan.status === "running" && (
+                  <span className={cn("animate-pulse text-[10px] tracking-widest", isVerifying ? "text-cyan-300" : "text-primary")}>
+                    {isVerifying ? "VERIFYING" : "LIVE"}
+                  </span>
               )}
               <span className={cn("font-bold", phase === "complete" ? scan.status === "canceled" ? "text-muted-foreground" : "text-emerald-400" : "text-primary")}>
                 {phase === "complete" ? scan.status === "canceled" ? "CANCELED" : "COMPLETE" : `${scan.progress}%`}
@@ -554,7 +565,7 @@ export function Dashboard() {
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground py-16">
                   <Shield className="w-8 h-8 mb-3 opacity-20" />
                   <p className="text-xs font-mono uppercase">
-                    {phase === "scanning" ? "Scanning..." : "No findings"}
+                    {phase === "scanning" ? (isVerifying ? "Verifying detected signals..." : "Scanning...") : "No findings"}
                   </p>
                 </div>
               ) : (
@@ -591,7 +602,7 @@ export function Dashboard() {
                 <Clock className="w-2.5 h-2.5" />
                 {scan.startedAt ? new Date(scan.startedAt).toLocaleString() : "—"}
                 <span>·</span>
-                {confirmedFindings.length} verified · {suspectedFindings.length} signal{suspectedFindings.length !== 1 ? "s" : ""}
+                {confirmedFindings.length} verified · {boundedVerifiedFindings.length} canary-confirmed · {suspectedFindings.length} signal{suspectedFindings.length !== 1 ? "s" : ""}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -603,7 +614,10 @@ export function Dashboard() {
           {findings.length > 0 && (
             <div className="px-5 py-3 border-b border-border/40 flex items-center gap-3 flex-wrap">
               <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Risk Summary:</span>
-      <DashboardSeveritySummary findings={findings} />
+              <DashboardSeveritySummary findings={findings} />
+              <span className="ml-auto text-[10px] font-mono text-primary border border-primary/30 bg-primary/10 rounded px-2 py-1">
+                {boundedVerifiedFindings.length} CANARY VERIFIED
+              </span>
             </div>
           )}
 

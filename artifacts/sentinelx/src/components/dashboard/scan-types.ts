@@ -8,6 +8,7 @@ export interface Finding {
   evidence: string;
   remediation: string;
   status: string;
+  verified?: boolean;
   verification?: "verified" | "version_match" | "suspected" | "informational";
   confidence?: number;
   evidenceQuality?: "weak" | "standard" | "strong";

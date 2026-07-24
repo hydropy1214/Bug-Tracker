@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer, real, index } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, real, boolean, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { projectsTable } from "./projects";
@@ -17,6 +17,7 @@ export const findingsTable = pgTable("findings", {
   severity: text("severity").notNull().default("medium"),
   status: text("status").notNull().default("open"),
   verification: text("verification").notNull().default("verified"),
+  verified: boolean("verified").notNull().default(false),
   confidence: integer("confidence").notNull().default(80),
   evidenceQuality: text("evidence_quality").notNull().default("standard"),
   verificationMethod: text("verification_method"),
