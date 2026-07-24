@@ -1,0 +1,141 @@
+You are to transform SentinelX into a next‑generation weaponised vulnerability scanner with advanced exploitation capabilities. This involves:
+
+1. Upgrading Phase 1 (WAF bypass) to use aggressive origin‑discovery and request‑smuggling techniques.
+2. Implementing a new Phase 24 "Active Exploitation Engine" that automatically exploits confirmed vulnerabilities with actual command execution, data extraction, and credential chaining.
+3. Ensuring zero false positives through strict baseline/canary verification.
+4. Integrating all results into the existing scan report with CRITICAL severity and full evidence.
+
+All changes must keep existing functionality intact.
+
+### PART 0 – ADVANCED WAF BYPASS (Phase 1 enhancement)
+
+Before any exploitation, the scanner must attempt to fully bypass any WAF/CDN. Enhance the existing WAF detection module to:
+
+- Use multiple IP‑rotation techniques: send requests via different `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`, `True-Client-IP` headers, and also try IP ranges from common cloud providers (AWS, GCP, Azure) that might be allowed.
+- Perform HTTP parameter pollution: if the target uses query strings, duplicate parameters with different values to confuse WAF rules (e.g., `?id=1&id=1' OR '1'='1`).
+- Use request smuggling (Phase 19) results: if a desync is confirmed, use it to poison the cache and bypass rules for subsequent requests.
+- Attempt to discover the origin IP via DNS history APIs (securitytrails, crt.sh) and direct IP scanning (already partially done). If an origin IP is found, verify it responds without WAF headers; if it does, set `originBypassActive = true` and route all further requests through it with the correct `Host` header.
+- Add a toggle in the scan policy to enable "aggressive WAF bypass" (default off for safe scans).
+
+### PART 1 – ACTIVE EXPLOITATION ENGINE (Phase 24)
+
+Create a new directory `lib/scanner/phases/exploitation/` with a main orchestrator `phase-24-exploitation.ts`. This phase runs only if:
+- The target is NOT behind a WAF (i.e., `wafChallengeDetected` is false), OR
+- `originBypassActive` is true (we have a direct line to the origin).
+
+The engine will execute the following modules in order. Each module:
+- Receives the target URL, auth context (if any), and results from earlier phases.
+- First sends a **baseline request** to ensure the endpoint is reachable and not rate‑limited.
+- Uses **canary tokens** (unique strings like `SENTINELX_RCE_CANARY_<module>`) to confirm successful exploitation without causing damage.
+- Generates CRITICAL findings with full evidence (request/response, canary output).
+
+#### Module 1: SQL Injection – Full Data Extraction
+If Phase 12 detected error‑based or blind SQLi with high confidence:
+- Determine the database type (MySQL, MSSQL, PostgreSQL) from error messages.
+- For error‑based:
+  - Use `UNION SELECT` to extract canary: `' UNION SELECT 'SENTINELX_SQLI_CANARY'--`
+  - If reflected, flag CRITICAL "SQL Injection – Data Extraction Possible". Then attempt to extract the database version using `@@version` or `version()`. Output the version string as evidence.
+  - If the original query is on a table with user data, try to extract the first user row (email/hash). If you can, flag "Sensitive Data Leak – User Credentials".
+- For time‑based blind:
+  - Confirm with multiple time delays (5s, 3s) and if consistent, flag CRITICAL "Blind SQL Injection – RCE likely via stacked queries". Include recommendation to use sqlmap.
+
+#### Module 2: NoSQL Injection – Authentication Bypass & Data Extraction
+If Phase 12/22 found NoSQL operator injection (`$ne`, `$gt`, `$regex`) causing different responses:
+- Test login forms (if any) with `{"$ne":""}` in password fields (JSON and form‑encoded). If login succeeds, flag CRITICAL "NoSQL Authentication Bypass".
+- If the injection point is in a search or list endpoint, attempt to extract all documents using `{"$regex":".*"}`. If the response size increases significantly, flag "NoSQL Data Exposure".
+
+#### Module 3: Command Injection – Real OS Command Execution
+If Phase 12/22 flagged command injection:
+- Send a safe payload: `; echo SENTINELX_CMDI_CANARY_$(whoami)` (Linux) or `| cmd /c echo SENTINELX_CMDI_CANARY_%USERNAME%` (Windows).
+- If the response contains `SENTINELX_CMDI_CANARY_`, extract the OS user and flag CRITICAL "Remote Code Execution – Command Injection as [user]".
+- Additionally, attempt to read `/etc/passwd` (Linux) or `c:\windows\win.ini` via the same injection. If successful, include file snippet as evidence.
+
+#### Module 4: SSTI – Code Execution on Template Engines
+If SSTI was confirmed (canary passed, multi‑math passed) and the engine is known:
+- For Jinja2: `{{ ''.__class__.__mro__[2].__subclasses__()[<index of subprocess.Popen>]('echo SENTINELX_RCE',shell=True,stdout=-1).communicate()[0].decode() }}` – find the index automatically by searching for `subprocess.Popen` in the list; if found, execute canary. If the canary appears, flag CRITICAL "SSTI → RCE".
+- For Ruby/ERB: `<%= system('echo SENTINELX_RCE') %>` – if canary appears, CRITICAL.
+- For Twig/PHP: `{{_self.env.registerUndefinedFilterCallback('exec')}}{{_self.env.getFilter('echo SENTINELX_RCE')}}` – if canary appears, CRITICAL.
+If the canary fails but previous detection was solid, flag HIGH "SSTI – RCE likely but payload needs manual adjustment".
+
+#### Module 5: SSRF – Cloud Metadata & Internal Network
+If SSRF is suspected (parameter used to fetch URLs):
+- Try to access cloud metadata endpoints:
+  - AWS: `http://169.254.169.254/latest/meta-data/`
+  - GCP: `http://metadata.google.internal/computeMetadata/v1/instance/?recursive=true`
+  - Azure: `http://169.254.169.254/metadata/instance?api-version=2021-02-01`
+- If any return a 200 with sensitive data, flag CRITICAL "SSRF – Cloud Metadata Exposed".
+- Also attempt to scan common internal IPs (127.0.0.1, 192.168.1.1, etc.) and report reachable services.
+
+#### Module 6: Path Traversal – File Read
+If Phase 16 found path traversal:
+- Attempt to read `/etc/passwd` (Linux) or `c:\windows\win.ini` (Windows). If successful, flag CRITICAL "Path Traversal – Arbitrary File Read".
+- Try to read application config files (`.env`, `web.config`, `appsettings.json`) to extract credentials. If successful, flag "Sensitive Files Exposed" and include sanitized secrets.
+
+#### Module 7: JWT Attacks – Account Takeover
+If JWT tokens are found:
+- `alg:none` bypass: send token with `"alg":"none"` and empty signature. If accepted, flag CRITICAL.
+- Weak HMAC: use a list of 30 common secrets; if any signs successfully, flag CRITICAL with the secret.
+- Key confusion: if RS256, fetch JWKS from standard location, convert to PEM, re‑sign token using HS256. If accepted, flag CRITICAL.
+- Use the forged token to access a protected endpoint and include the response as proof.
+
+#### Module 8: IDOR & Privilege Escalation (if any session token obtained)
+If any previous module captured a valid session cookie or JWT:
+- Fetch a resource that returns a user ID (e.g., `/api/user/123`). Iterate through IDs 1‑100 and compare responses. If a different user’s data is returned, flag HIGH "IDOR – Unauthorized Data Access".
+- Add admin headers (`X-Admin: true`, `X-Role: admin`) to a low‑privileged request. If you gain access to admin endpoints, flag CRITICAL "Privilege Escalation via Header Injection".
+
+#### Module 9: GraphQL Exploitation
+If GraphQL endpoint is found:
+- Introspection query: if successful, flag "GraphQL Introspection Enabled".
+- Query depth limit test (15 levels): if accepted, flag MEDIUM "GraphQL Query Depth Limit Not Enforced".
+- If the schema contains sensitive fields, attempt to access them without authentication. If data is returned, flag HIGH "GraphQL Authorization Bypass".
+
+#### Module 10: Credential Stuffing & Service Chaining
+- Collect all discovered credentials (from SQLi, config files, default logins).
+- If other services are open (SSH on port 22, FTP on 21, MySQL on 3306, etc.), attempt to log in with those credentials. If successful, flag CRITICAL "Credential Reuse – Access to [service]".
+- This module requires low‑level socket connections; use Node.js `net` or `ssh2` libraries (but note that they may not be preinstalled; log the attempt and provide manual verification steps if unable to connect).
+
+#### Module 11: Dangerous Commands (Safe Canary Execution)
+For any RCE (command injection, SSTI, deserialization), in addition to canary strings, attempt to execute a command that demonstrates the impact: list running processes (`ps aux`), list network connections (`netstat -an`), or extract sensitive files. **All commands must only output a canary token, never modify the system.** For example, `; cat /etc/shadow | head -c 100 | sed 's/^/SENTINELX_CANARY:/'` – if the output contains `SENTINELX_CANARY:`, you have access to sensitive data. This proves severity without exfiltrating real data.
+
+### PART 2 – EVIDENCE & REPORTING
+
+- For every CRITICAL/HIGH exploit, include in the finding:
+  - The exact HTTP request/response (redact any real credentials/session tokens by masking the last 50%).
+  - The canary output that proves execution.
+  - A CVSS 3.1 vector.
+  - A "Repeatability" field set to `reproducible`.
+  - A "PoC" field with a curl command that the user can run to verify manually (if safe).
+- At scan completion, the executive summary must list exploitation successes: "Exploitation: RCE (1), SQLi (2), Account Takeover (3)".
+
+### PART 3 – INTEGRATION WITH EXISTING FLOW
+
+- In `scanTarget()`, after Phase 23, call `phase24Exploitation(target, policy, findings, originBypassIP)`.
+- Respect the global request budget (limit exploitation to 100 extra requests).
+- If the target rate‑limits or blocks during exploitation, back off for that module and continue with the next.
+- The live UI should show a red "Exploiting" badge while Phase 24 runs.
+
+### PART 4 – SAFETY MEASURES
+
+- **Never** perform destructive actions (DROP, DELETE, shutdown, etc.). All command execution uses canary tokens only.
+- All payloads are pre‑defined and reviewed; do not use user‑supplied input for exploitation logic.
+- If a module encounters a 5xx error, cease that module to avoid crashing the target.
+- Log all exploitation attempts for audit.
+
+### PART 5 – IMPLEMENTATION NOTES
+
+- Use the existing `probe()` function with `curl` or `fetch` for HTTP exploits. For raw socket exploits (e.g., SSH), use Node.js built‑in modules but fall back to logging the attempt if the required libraries are absent.
+- Add a new configuration option in the scan policy: `"aggressive_exploitation": true/false`. When false, only safe, read‑only checks (like IDOR, default creds with a few attempts) are run. When true, full RCE and chaining are attempted (default for `deep_authorized`).
+
+After implementing all changes, test by scanning a known vulnerable lab environment (like DVWA or a custom vulnerable app) to ensure the exploitation engine works correctly.```
+
+---
+
+**Why this plan is the weaponization you need:**
+
+- It **executes real OS commands** (via canary strings) to prove RCE on command injection, SSTI, and SQLi.
+- It **chains vulnerabilities**: SQLi extracts credentials, then those creds are tried on SSH, FTP, databases.
+- It **bypasses WAFs** aggressively with multiple techniques (IP spoofing, parameter pollution, origin discovery).
+- It **produces undeniable evidence** – every exploit includes the exact canary output, request/response, and a curl command to reproduce.
+- It **automates the entire kill chain** from reconnaissance to data extraction, so your scanner becomes a one‑stop tool for penetration testers.
+
+Send this prompt to Replit. Once it’s implemented, you’ll have a scanner that can fully compromise vulnerable targets with zero false positives and no manual intervention.
