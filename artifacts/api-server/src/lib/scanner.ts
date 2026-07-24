@@ -245,6 +245,9 @@ export async function runActiveChecks<T>(fn: () => Promise<T>, fallback: T): Pro
   context.activeProbeDepth++;
   try {
     return await fn();
+  } catch {
+    // Return the safe fallback so a single phase error never crashes the scan.
+    return fallback;
   } finally {
     context.activeProbeDepth--;
   }
@@ -4203,6 +4206,18 @@ export async function scanTarget(
         all.push(...f);
       };
 
+      // Wraps a phase so any unhandled error is logged and the scan continues
+      // with the fallback value instead of crashing the entire scan.
+      const safePhase = async <T>(label: string, fn: () => Promise<T>, fallback: T): Promise<T> => {
+        try {
+          return await fn();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await onLog(`[${ts()}] [WARNING] ${label} encountered an error and was skipped: ${msg}`);
+          return fallback;
+        }
+      };
+
       await onLog(`[${ts()}] ═══════════════════════════════════════`);
       await onLog(`[${ts()}] TARGET  : ${target.url}`);
       await onLog(`[${ts()}] HOST    : ${target.hostname}`);
@@ -4232,26 +4247,30 @@ export async function scanTarget(
 
       // Phase 2: DNS enumeration
       await onLog(`[${ts()}] [Phase 2] DNS enumeration (dig)...`);
-      add(await checkDns(target.hostname, onLog));
+      add(await safePhase('Phase 2 (DNS)', () => checkDns(target.hostname, onLog), []));
 
       // Phase 3: IP geolocation & ASN
       await onLog(`[${ts()}] [Phase 3] IP geolocation & ASN intelligence...`);
-      await getIpInfo(target.hostname, onLog);
+      await safePhase('Phase 3 (IP info)', () => getIpInfo(target.hostname, onLog), undefined as void);
 
       // Phase 4: WHOIS
       if (assetType !== 'ip') {
         await onLog(`[${ts()}] [Phase 4] WHOIS domain intelligence...`);
-        add(await checkWhois(target.hostname, onLog));
+        add(await safePhase('Phase 4 (WHOIS)', () => checkWhois(target.hostname, onLog), []));
       }
 
       // Phase 5: Subdomain discovery + takeover
       let discoveredSubs: string[] = [];
       if (assetType !== 'ip') {
         await onLog(`[${ts()}] [Phase 5] Subdomain discovery...`);
-        const { findings: subFindings, subs } = await discoverSubdomains(target.hostname, onLog);
-        add(subFindings);
-        discoveredSubs = subs;
-        await onLog(`[${ts()}] Total subdomains in scope: ${subs.length}`);
+        const subResult = await safePhase(
+          'Phase 5 (Subdomain discovery)',
+          () => discoverSubdomains(target.hostname, onLog),
+          { findings: [] as RealFinding[], subs: [] as string[] },
+        );
+        add(subResult.findings);
+        discoveredSubs = subResult.subs;
+        await onLog(`[${ts()}] Total subdomains in scope: ${discoveredSubs.length}`);
         await onLog(`[${ts()}] [Phase 5b] Subdomain takeover detection...`);
         add(await runActiveChecks(() => checkSubdomainTakeover(discoveredSubs, onLog), []));
       }
@@ -4263,16 +4282,20 @@ export async function scanTarget(
       // Phase 7: TLS/SSL analysis
       if (target.isHttps) {
         await onLog(`[${ts()}] [Phase 7] TLS/SSL analysis...`);
-        add(await checkTls(target.hostname, target.port, onLog));
+        add(await safePhase('Phase 7 (TLS)', () => checkTls(target.hostname, target.port, onLog), []));
       }
 
       // Phase 8: HTTP security headers
       await onLog(`[${ts()}] [Phase 8] HTTP security header analysis...`);
-      add(await checkHeaders(target, onLog));
+      add(await safePhase('Phase 8 (Headers)', () => checkHeaders(target, onLog), []));
 
       // Phase 9: Technology fingerprinting
       await onLog(`[${ts()}] [Phase 9] Technology fingerprinting...`);
-      const { techs, findings: fpFindings } = await fingerprint(target, onLog);
+      const { techs, findings: fpFindings } = await safePhase(
+        'Phase 9 (Fingerprint)',
+        () => fingerprint(target, onLog),
+        { techs: [] as TechProfile[], findings: [] as RealFinding[] },
+      );
       add(fpFindings);
       if (techs.length > 0)
         await onLog(
@@ -4285,7 +4308,7 @@ export async function scanTarget(
 
       // Phase 11: Wayback Machine
       await onLog(`[${ts()}] [Phase 11] Wayback Machine...`);
-      add(await checkWayback(target.hostname, onLog));
+      add(await safePhase('Phase 11 (Wayback)', () => checkWayback(target.hostname, onLog), []));
 
       // Phase 12: Web app probes (SQLi, XSS, NoSQL, CMDi, redirects, methods)
       await onLog(`[${ts()}] [Phase 12] Web app probes...`);
@@ -4333,49 +4356,59 @@ export async function scanTarget(
       await onLog(
         `[${ts()}] [Phase 22] Advanced probes — SSTI · XXE · SSRF · Deserialization · CMDi · NoSQL...`,
       );
-      const {
-        checkSSTI,
-        checkXXE,
-        checkSSRF,
-        checkDeserialization,
-        checkCommandInjection,
-        checkNoSqlInjection,
-        lookupCvesForTechs,
-      } = await import('./vuln-probes');
-      add(
-        await runActiveChecks(async () => {
-          const advancedFindings: RealFinding[] = [];
-          if (checkSSTI) advancedFindings.push(...(await checkSSTI(target, onLog)));
-          if (checkXXE) advancedFindings.push(...(await checkXXE(target, onLog)));
-          if (checkSSRF) advancedFindings.push(...(await checkSSRF(target, onLog)));
-          if (checkDeserialization)
-            advancedFindings.push(...(await checkDeserialization(target, onLog)));
-          if (checkCommandInjection)
-            advancedFindings.push(...(await checkCommandInjection(target, onLog)));
-          if (checkNoSqlInjection)
-            advancedFindings.push(...(await checkNoSqlInjection(target, onLog)));
-          return advancedFindings;
-        }, []),
-      );
+      // Dynamic import is wrapped so a module-load failure skips Phases 22–23
+      // rather than crashing the entire scan.
+      let lookupCvesForTechs: ((t: TechProfile[], l: LogFn) => Promise<RealFinding[]>) | undefined;
+      await safePhase('Phase 22 (Advanced probes / module load)', async () => {
+        const {
+          checkSSTI,
+          checkXXE,
+          checkSSRF,
+          checkDeserialization,
+          checkCommandInjection,
+          checkNoSqlInjection,
+          lookupCvesForTechs: _lookupCves,
+        } = await import('./vuln-probes');
+        lookupCvesForTechs = _lookupCves;
+        add(
+          await runActiveChecks(async () => {
+            const advancedFindings: RealFinding[] = [];
+            if (checkSSTI) advancedFindings.push(...(await checkSSTI(target, onLog)));
+            if (checkXXE) advancedFindings.push(...(await checkXXE(target, onLog)));
+            if (checkSSRF) advancedFindings.push(...(await checkSSRF(target, onLog)));
+            if (checkDeserialization)
+              advancedFindings.push(...(await checkDeserialization(target, onLog)));
+            if (checkCommandInjection)
+              advancedFindings.push(...(await checkCommandInjection(target, onLog)));
+            if (checkNoSqlInjection)
+              advancedFindings.push(...(await checkNoSqlInjection(target, onLog)));
+            return advancedFindings;
+          }, []),
+        );
+      }, undefined as void);
 
       // Phase 23: CVE database lookup
       await onLog(`[${ts()}] [Phase 23] CVE database lookup...`);
-      add(await lookupCvesForTechs(techs, onLog));
+      if (lookupCvesForTechs) {
+        add(await safePhase('Phase 23 (CVE lookup)', () => lookupCvesForTechs!(techs, onLog), []));
+      } else {
+        await onLog(`[${ts()}] [Phase 23] Skipped — advanced probe module not loaded`);
+      }
 
       // ── WEAPONISED PHASES (only when allowVerification is true) ──
       if (policy.allowVerification) {
         await onLog(`[${ts()}] [Phase 24] Unsecured registration exploitation...`);
-        add(await checkOpenRegistration(target, onLog));
+        add(await safePhase('Phase 24 (Open registration)', () => checkOpenRegistration(target, onLog), []));
 
         await onLog(`[${ts()}] [Phase 25] Default credential brute-force...`);
-        add(await checkDefaultCredentials(target, onLog));
+        add(await safePhase('Phase 25 (Default credentials)', () => checkDefaultCredentials(target, onLog), []));
 
         await onLog(`[${ts()}] [Phase 26] SQLi authentication bypass...`);
-        add(await checkSqliAuthBypass(target, onLog));
+        add(await safePhase('Phase 26 (SQLi auth bypass)', () => checkSqliAuthBypass(target, onLog), []));
 
         if (getCapturedSession()) {
           await onLog(`[${ts()}] [Phase 28] IDOR with captured session...`);
-          add(await checkIdorWithCapturedSession(target, onLog));
+          add(await safePhase('Phase 28 (IDOR session)', () => checkIdorWithCapturedSession(target, onLog), []));
         }
       }
 

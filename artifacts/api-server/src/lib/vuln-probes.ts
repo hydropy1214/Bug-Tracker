@@ -192,9 +192,11 @@ export async function checkSSTI(target: Target, onLog: LogFn): Promise<RealFindi
        // The template payload must be present in the response context. Looking
        // for the result near another copy of the result is tautological and
        // caused CDN/Ray-ID numbers to become SSTI signals.
+       let decodedPayload = payload;
+       try { decodedPayload = decodeURIComponent(payload); } catch { /* malformed % sequence — use raw */ }
        const payloadPositions = [
          ...findAllPositions(cleanBody, payload),
-         ...findAllPositions(cleanBody, decodeURIComponent(payload)),
+         ...(decodedPayload !== payload ? findAllPositions(cleanBody, decodedPayload) : []),
        ];
        const nearPayloadRef = payloadPositions.length > 0 &&
          nearAny(cleanBody, payloadPositions, result, 200);
