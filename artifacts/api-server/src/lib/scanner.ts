@@ -1426,10 +1426,10 @@ export async function checkHeaders(target: Target, onLog: LogFn): Promise<RealFi
   if (!h['content-security-policy']) {
     findings.push({
       title: 'Missing Content-Security-Policy Header',
-      severity: 'medium',
-      cvss: 6.1,
+      severity: 'low',
+      cvss: 3.7,
       cve: null,
-      description: 'No CSP header is set.',
+      description: 'No CSP header is set. Absence alone is low severity; a misconfigured CSP is higher risk.',
       evidence: ev('Content-Security-Policy: (absent)'),
       remediation: 'Implement a strict CSP.',
     });
@@ -1475,12 +1475,12 @@ export async function checkHeaders(target: Target, onLog: LogFn): Promise<RealFi
   if (!xfo && !cspFa.toLowerCase().includes('frame-ancestors')) {
     findings.push({
       title: 'Clickjacking Protection Missing',
-      severity: 'medium',
-      cvss: 6.1,
+      severity: 'low',
+      cvss: 4.3,
       cve: null,
-      description: 'No X-Frame-Options or CSP frame-ancestors.',
+      description: 'No X-Frame-Options or CSP frame-ancestors directive found.',
       evidence: ev('X-Frame-Options: (absent)'),
-      remediation: 'Add: X-Frame-Options: DENY',
+      remediation: 'Add: X-Frame-Options: DENY or CSP: frame-ancestors \'none\'',
     });
   }
   if (!h['x-content-type-options']) {
@@ -2895,10 +2895,16 @@ export async function checkHostHeaderInjection(
     [{ 'X-Forwarded-Server': injectedHost }, 'X-Forwarded-Server'],
   ] as [Record<string, string>, string][]) {
     const r = await probe(target.url, { headers: hdrs, followRedirects: false, timeoutMs: 10_000 });
-    if (
-      r &&
-      (r.body.includes(injectedHost) || (r.headers['location'] ?? '').includes(injectedHost))
-    ) {
+    // Reflection in body text is only an issue when it appears in an exploitable
+    // context (href/src/action/url). Plain text echoing is not sufficient.
+    const locationHit = (r?.headers['location'] ?? '').includes(injectedHost);
+    const bodyHit =
+      !!r?.body &&
+      new RegExp(
+        `(?:href|src|action|content|url)\\s*=\\s*["']?[^"'>\\s]*${injectedHost.replace(/\./g, '\\.')}`,
+        'i',
+      ).test(r.body);
+    if (r && (locationHit || bodyHit)) {
       findings.push({
         title: `Host Header Injection via ${label}`,
         severity: 'high',
@@ -3018,6 +3024,12 @@ async function checkJwtAdvanced(
   const findings: RealFinding[] = [];
   const alg = String(header.alg ?? '').toUpperCase();
 
+  // Unauthenticated baseline: if the endpoint is already public (returns 200
+  // without any Authorization header) then a malformed token also returning 200
+  // is not evidence of signature bypass — it's just a public page.
+  const unauthR = await probe(target.url, { timeoutMs: 8_000, skipAuth: true });
+  const endpointRequiresAuth = !unauthR || unauthR.status === 401 || unauthR.status === 403;
+
   // Empty signature / stripping
   for (const [testToken, label] of [
     [`${parts[0]}.${parts[1]}.`, 'empty signature'],
@@ -3028,7 +3040,7 @@ async function checkJwtAdvanced(
       timeoutMs: 8_000,
       skipAuth: true,
     });
-    if (r && r.status === 200) {
+    if (r && r.status === 200 && endpointRequiresAuth) {
       findings.push({
         title: `JWT ${label.charAt(0).toUpperCase() + label.slice(1)} Accepted`,
         severity: 'critical',
@@ -3080,7 +3092,9 @@ async function checkJwtAdvanced(
     timeoutMs: 6_000,
     skipAuth: true,
   });
-  if (jkuR?.status === 200) {
+  // Only flag if the endpoint is gated — a public 200 baseline means the response
+  // says nothing about whether the jku was actually processed.
+  if (jkuR?.status === 200 && endpointRequiresAuth) {
     findings.push({
       title: 'JWT JKU Header Injection Accepted',
       severity: 'critical',
