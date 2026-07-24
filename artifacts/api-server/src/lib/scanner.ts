@@ -3818,6 +3818,7 @@ async function checkDefaultCredentials(target: Target, onLog: LogFn): Promise<Re
   if (!activeProbesAllowed()) return findings;
   await onLog(`[${ts()}] [Phase 25] Testing default credentials...`);
   const loginPaths = [
+    '/rest/Session/login',
     '/login',
     '/signin',
     '/sign-in',
@@ -3939,7 +3940,15 @@ async function checkSqliAuthBypass(target: Target, onLog: LogFn): Promise<RealFi
   const findings: RealFinding[] = [];
   if (!activeProbesAllowed()) return findings;
   await onLog(`[${ts()}] [Phase 26] Testing SQL injection authentication bypass...`);
-  const loginPaths = ['/login', '/signin', '/sign-in', '/admin/login', '/admin', '/user/login'];
+  const loginPaths = [
+    '/rest/Session/login',
+    '/login',
+    '/signin',
+    '/sign-in',
+    '/admin/login',
+    '/admin',
+    '/user/login',
+  ];
   const AUTH_SIGNALS = [
     'log out',
     'logout',
