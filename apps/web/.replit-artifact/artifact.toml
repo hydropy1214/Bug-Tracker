@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "SentinelX"
+version = "1.0.0"
+id = "artifacts/sentinelx"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18462
+
+[services.development]
+run = "pnpm --filter @workspace/web run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/web", "run", "build" ]
+serve = "static"
+publicDir = "apps/web/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18462"
+BASE_PATH = "/"

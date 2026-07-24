@@ -1,1 +1,0 @@
-export { checkSSTI } from "../../../vuln-probes";

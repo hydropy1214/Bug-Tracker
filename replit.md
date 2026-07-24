@@ -18,12 +18,12 @@ Every finding uses baseline comparison or canary tokens — no false positives.
 ## Architecture
 
 ```
-artifacts/sentinelx/   ← React 19 frontend (Vite + Tailwind v4)
-artifacts/api-server/  ← Express 5 backend + background scan worker
-lib/db/                ← Drizzle ORM + PostgreSQL schema
-lib/api-spec/          ← OpenAPI 3.1 spec
-lib/api-zod/           ← Generated Zod schemas (from spec)
-lib/api-client-react/  ← Generated React Query hooks (from spec)
+apps/web/              ← React 19 frontend (Vite + Tailwind v4)
+apps/api/              ← Express 5 backend + background scan worker
+packages/db/           ← Drizzle ORM + PostgreSQL schema
+packages/api-spec/     ← OpenAPI 3.1 spec
+packages/api-types/    ← Generated Zod schemas (from spec)
+packages/api-client/   ← Generated React Query hooks (from spec)
 ```
 
 ---
@@ -32,8 +32,8 @@ lib/api-client-react/  ← Generated React Query hooks (from spec)
 
 ### Workflows (auto-start)
 
-- **`artifacts/sentinelx: web`** — `pnpm --filter @workspace/sentinelx run dev`
-- **`artifacts/api-server: API Server`** — `pnpm --filter @workspace/api-server run dev`
+- **`apps/web: web`** — `pnpm --filter @workspace/web run dev`
+- **`apps/api: API Server`** — `pnpm --filter @workspace/api run dev`
 
 ### Secrets Required
 
@@ -69,10 +69,10 @@ pnpm install
 pnpm --filter @workspace/db run push
 
 # Start API server
-pnpm --filter @workspace/api-server run dev
+pnpm --filter @workspace/api run dev
 
 # Start frontend
-pnpm --filter @workspace/sentinelx run dev
+pnpm --filter @workspace/web run dev
 
 # Type check all packages
 pnpm run typecheck

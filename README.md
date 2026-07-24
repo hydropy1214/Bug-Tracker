@@ -32,20 +32,20 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     Browser / Client                        │
-│              artifacts/sentinelx (React + Vite)             │
+│                    apps/web (React + Vite)                  │
 │      React 19 · TanStack Query · Framer Motion · Wouter     │
 └───────────────────────┬─────────────────────────────────────┘
                         │ HTTP (REST)  /api/*
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
-│               artifacts/api-server (Express 5)              │
+│                    apps/api (Express 5)                      │
 │  Routes: projects · assets · scans · findings · quick-scan  │
 │  Middleware: Pino logging · CORS · JSON · base-path proxy   │
 └───────┬───────────────┬────────────────────────────────────-┘
         │               │
         ▼               ▼
 ┌──────────────┐  ┌─────────────────────────────────────────┐
-│  lib/db      │  │         Scan Worker (background)         │
+│  packages/db │  │         Scan Worker (background)         │
 │  Drizzle ORM │  │  Polls DB for pending scans every 2s    │
 │  PostgreSQL  │  │  Calls scanTarget() → updates logs/DB   │
 └──────────────┘  └──────────────┬──────────────────────────┘
@@ -176,11 +176,11 @@ sentinelx/                              ← monorepo root
 
 ## Every File Explained
 
-### `artifacts/api-server/src/index.ts`
+### `apps/api/src/index.ts`
 Server entry point. Reads `PORT` from environment, binds the Express `app`, then calls
 `startScanWorker()` to begin the background polling loop. Nothing else lives here.
 
-### `artifacts/api-server/src/app.ts`
+### `apps/api/src/app.ts`
 Express 5 application factory. Registers:
 - **Pino HTTP logger** (structured JSON logs)
 - **CORS** (open during development; lock down in production)
@@ -194,7 +194,7 @@ Express 5 application factory. Registers:
   - `/api/findings` → `findings.ts`
   - `/api/dashboard` → `dashboard.ts`
 
-### `artifacts/api-server/src/lib/scanner.ts` ← **Core engine (2632 lines)**
+### `apps/api/src/lib/scanner.ts` ← **Core engine (2632 lines)**
 
 Exports:
 | Export | Description |
@@ -215,7 +215,7 @@ Internal functions (not exported):
 `checkWayback`, `checkHeaders`, `fingerprint`, `checkSensitivePaths`, `checkWebApp`,
 `checkApiSurface`, `probe` (HTTP fetch wrapper), `nmapScan`, `digQuery`.
 
-### `artifacts/api-server/src/lib/vuln-probes.ts` ← **Advanced probes (670 lines)**
+### `apps/api/src/lib/vuln-probes.ts` ← **Advanced probes (670 lines)**
 
 Exports:
 | Export | Description |
@@ -228,24 +228,24 @@ Exports:
 | `checkNoSqlInjection()` | MongoDB operator injection — `{$gt:""}`, `{$ne:null}`, `[$ne]=`, form + JSON |
 | `lookupCvesForTechs()` | NVD API CVE lookup for detected tech/version combinations |
 
-### `artifacts/api-server/src/lib/scan-worker.ts`
+### `apps/api/src/lib/scan-worker.ts`
 Background loop that runs every 2 seconds. Queries the database for scans in `pending` state,
 picks up one at a time, sets it to `running`, calls `scanTarget()`, streams log lines back to
 the database, and marks the scan `completed` when done. Findings are bulk-inserted into the
 `findings` table with full audit metadata.
 
-### `artifacts/api-server/src/lib/auth-context.ts`
+### `apps/api/src/lib/auth-context.ts`
 Helpers to encrypt/decrypt authentication headers (Bearer tokens, cookies) that are stored
 alongside scans. Uses `SESSION_SECRET` via AES-256-GCM. Auth context is passed to the scanner
 so it can include credentials in probes.
 
-### `artifacts/api-server/src/routes/quick-scan.ts`
+### `apps/api/src/routes/quick-scan.ts`
 `POST /api/quick-scan` — one-shot endpoint. Accepts `{ url, scanType?, profile? }`.
 Creates a `Project`, an `Asset`, and a `Scan` record in a single transaction, then returns
 `{ scanId }`. The scan worker picks it up immediately. Defaults: `scanType = "full"`,
 `profile = "deep_authorized"`.
 
-### `artifacts/api-server/src/routes/scans.ts`
+### `apps/api/src/routes/scans.ts`
 Full CRUD for scans:
 - `GET /api/scans` — paginated list with project/asset joins
 - `GET /api/scans/:id/status` — live polling endpoint (returns scan + findings array)
@@ -254,28 +254,28 @@ Full CRUD for scans:
 - `PATCH /api/scans/:id` — update status/progress
 - `DELETE /api/scans/:id` — soft delete
 
-### `artifacts/api-server/src/routes/projects.ts`
+### `apps/api/src/routes/projects.ts`
 Full CRUD for projects with aggregated counts (asset count, scan count, open finding count).
 
-### `artifacts/api-server/src/routes/assets.ts`
+### `apps/api/src/routes/assets.ts`
 Asset management. Includes `POST /api/assets/:id/import-spec` which accepts an OpenAPI YAML/JSON
 spec and parses it into `endpoints` table rows for structured API surface scanning.
 
-### `artifacts/api-server/src/routes/findings.ts`
+### `apps/api/src/routes/findings.ts`
 Full CRUD for findings. Includes `PATCH /api/findings/:id/status` for triaging findings
 (open → confirmed → mitigated → false_positive) and writes to the `activity` table.
 
-### `artifacts/api-server/src/routes/dashboard.ts`
+### `apps/api/src/routes/dashboard.ts`
 Returns aggregate stats: total projects, open findings by severity, recent activity feed,
 scan counts, and trend data for the dashboard overview cards.
 
-### `artifacts/api-server/src/routes/health.ts`
+### `apps/api/src/routes/health.ts`
 `GET /api/healthz` → `200 { status: "ok", ts: <ISO timestamp> }`. Used by Replit workflow
 health checks and uptime monitors.
 
 ---
 
-### `artifacts/sentinelx/src/App.tsx`
+### `apps/web/src/App.tsx`
 Root component. Wraps everything in `QueryClientProvider` (TanStack Query). Uses `wouter`
 for client-side routing. Routes:
 - `/` → `Dashboard`
@@ -285,7 +285,7 @@ for client-side routing. Routes:
 
 All routes are wrapped in `Shell` (sidebar + header layout).
 
-### `artifacts/sentinelx/src/pages/Dashboard.tsx`
+### `apps/web/src/pages/Dashboard.tsx`
 Main scan UI. The only user-facing entry point for running a scan:
 - URL input field
 - Single **SCAN** button (always runs `scanType: "full"`, `profile: "deep_authorized"`)
@@ -294,47 +294,47 @@ Main scan UI. The only user-facing entry point for running a scan:
 - Completed: full threat-level report with collapsible finding cards
 - Idle: capability grid showing all 12 detection categories
 
-### `artifacts/sentinelx/src/pages/Projects.tsx`
+### `apps/web/src/pages/Projects.tsx`
 Lists all managed projects (created via the projects API). Shows name, description, status,
 asset count, and open finding count. Links to `ProjectDetail`.
 
-### `artifacts/sentinelx/src/pages/ProjectDetail.tsx`
+### `apps/web/src/pages/ProjectDetail.tsx`
 Tabbed view for a specific project. Three tabs: Assets, Scans, Findings.
 
-### `artifacts/sentinelx/src/pages/tabs/AssetsTab.tsx`
+### `apps/web/src/pages/AssetsTab.tsx`
 Lists assets for a project. Supports adding new assets and importing OpenAPI specs.
 
-### `artifacts/sentinelx/src/pages/tabs/ScansTab.tsx`
+### `apps/web/src/pages/ScansTab.tsx`
 Lists scans for a project with status badges, progress, and finding counts. Links to scan
 detail/report view.
 
-### `artifacts/sentinelx/src/pages/tabs/FindingsTab.tsx`
+### `apps/web/src/pages/FindingsTab.tsx`
 Filterable findings table (by severity, status, verification). Supports inline triaging.
 
-### `artifacts/sentinelx/src/components/layout/Shell.tsx`
+### `apps/web/src/components/layout/Shell.tsx`
 Full-height sidebar + topbar layout. Sidebar links: Scan Engine, Projects, Settings.
 Shows "SYSTEM ONLINE" indicator and version number.
 
 ---
 
-### `lib/db/src/index.ts`
+### `packages/db/src/index.ts`
 Exports `db` (Drizzle ORM instance over a `pg.Pool`) and re-exports all schema tables.
 Reads `DATABASE_URL` from environment.
 
-### `lib/db/src/schema/*.ts`
+### `packages/db/src/schema/*.ts`
 See [Database Schema](#database-schema) section below.
 
-### `lib/db/drizzle.config.ts`
+### `packages/db/drizzle.config.ts`
 Drizzle Kit config — points to `DATABASE_URL`, schema glob, output dir for migrations.
 
-### `lib/api-spec/src/openapi.yaml`
+### `packages/api-spec/openapi.yaml`
 OpenAPI 3.1 spec for the SentinelX API. Defines all request/response shapes used to
 generate the Zod schemas and React Query hooks in the sibling packages.
 
-### `lib/api-zod/src/index.ts` and `lib/api-client-react/src/index.ts`
+### `packages/api-types/src/index.ts` and `packages/api-client/src/index.ts`
 Auto-generated from the OpenAPI spec. Not hand-edited. Re-generate with:
 ```bash
-pnpm --filter @workspace/api-spec run generate
+pnpm --filter @workspace/api-spec run codegen
 ```
 
 ---
@@ -447,7 +447,7 @@ pnpm --filter @workspace/api-spec run generate
 | **Mobile app** | Low | Task #2 is proposed but not started. |
 | **Authorisation controls on scan targets** | Low | Task #3 is proposed but not started — no mechanism to prevent scanning unauthorised targets. |
 | **GraphQL mutation fuzzing** | Low | GraphQL schema is discovered but individual mutations/queries are not fuzzed. |
-| **API client React Query hooks** | Low | `lib/api-client-react` is generated but the frontend still uses raw `fetch()` calls in most places. |
+| **API client React Query hooks** | Low | `packages/api-client` is generated but the frontend still uses raw `fetch()` calls in most places. |
 
 ---
 
@@ -470,8 +470,8 @@ pnpm --filter @workspace/api-spec run generate
 Everything is pre-configured. Just:
 1. Open the Repl
 2. The two workflows start automatically:
-   - **`artifacts/sentinelx: web`** — React dev server
-   - **`artifacts/api-server: API Server`** — Express backend + scan worker
+   - **`apps/web: web`** — React dev server
+   - **`apps/api: API Server`** — Express backend + scan worker
 3. The PostgreSQL database is provisioned automatically
 4. `SESSION_SECRET` is set as a Replit Secret
 
@@ -495,10 +495,10 @@ pnpm --filter @workspace/db run push
 # 5. Start both services (two separate terminals)
 
 # Terminal 1 — API server
-pnpm --filter @workspace/api-server run dev
+pnpm --filter @workspace/api run dev
 
 # Terminal 2 — Frontend
-pnpm --filter @workspace/sentinelx run dev
+pnpm --filter @workspace/web run dev
 ```
 
 ### Environment File (`.env`)
@@ -526,7 +526,7 @@ NODE_ENV=development
 ### Start API Server
 
 ```bash
-pnpm --filter @workspace/api-server run dev
+pnpm --filter @workspace/api run dev
 ```
 
 Starts Express on `PORT` (default 3000). Automatically starts the scan worker background loop.
@@ -534,7 +534,7 @@ Starts Express on `PORT` (default 3000). Automatically starts the scan worker ba
 ### Start Frontend
 
 ```bash
-pnpm --filter @workspace/sentinelx run dev
+pnpm --filter @workspace/web run dev
 ```
 
 Starts Vite dev server. The frontend proxies `/api/*` to the API server.
@@ -546,7 +546,7 @@ pnpm run build
 ```
 
 Builds all packages in dependency order. API server is bundled with esbuild into
-`artifacts/api-server/dist/index.js`. Frontend is built to `artifacts/sentinelx/dist/`.
+`apps/api/dist/index.mjs`. Frontend is built to `apps/web/dist/public/`.
 
 ### Database Operations
 
@@ -568,7 +568,7 @@ pnpm --filter @workspace/db run studio
 pnpm run typecheck
 
 # Check a specific package
-pnpm --filter @workspace/api-server exec tsc --noEmit
+pnpm --filter @workspace/api exec tsc --noEmit
 ```
 
 ---

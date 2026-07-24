@@ -1,0 +1,1 @@
+export { checkCommandInjection, checkCommandInjectionDeep } from '../../../vuln-probes';
