@@ -1,0 +1,288 @@
+# ROLE
+
+You are a senior Staff Software Engineer and TypeScript monorepo architect.
+
+Your task is to professionally refactor this repository into a clean production-grade project focused ONLY on SentinelX.
+
+DO NOT rewrite the application.
+DO NOT change scanner logic.
+DO NOT change API behavior.
+DO NOT remove working features.
+
+Your job is ONLY to clean, reorganize, simplify, and modernize the project structure.
+
+--------------------------------------------------
+PRIMARY GOAL
+--------------------------------------------------
+
+Transform this repository into a clean, maintainable production project.
+
+Remove all prototype, mockup, duplicate, generated junk, temporary files, prompt artifacts, and unused code.
+
+After the refactor the repository should look like a professional GitHub security product.
+
+--------------------------------------------------
+TARGET STRUCTURE
+--------------------------------------------------
+
+SentinelX/
+
+apps/
+    api/
+    web/
+
+packages/
+    db/
+    api-client/
+    api-types/
+    api-spec/
+
+docs/
+
+scripts/
+
+.env.example
+README.md
+package.json
+pnpm-workspace.yaml
+tsconfig.base.json
+
+--------------------------------------------------
+MOVE FILES
+--------------------------------------------------
+
+Rename
+
+artifacts/api-server
+
+to
+
+apps/api
+
+Rename
+
+artifacts/sentinelx
+
+to
+
+apps/web
+
+Rename
+
+lib/db
+
+to
+
+packages/db
+
+Rename
+
+lib/api-client-react
+
+to
+
+packages/api-client
+
+Rename
+
+lib/api-zod
+
+to
+
+packages/api-types
+
+Rename
+
+lib/api-spec
+
+to
+
+packages/api-spec
+
+--------------------------------------------------
+REMOVE COMPLETELY
+--------------------------------------------------
+
+Delete ONLY if unused.
+
+artifacts/mockup-sandbox
+
+attached_assets
+
+temporary prompt files
+
+old prototype code
+
+dead components
+
+unused hooks
+
+unused utilities
+
+unused npm packages
+
+unused TypeScript files
+
+unused generated files
+
+duplicate UI components
+
+orphaned code
+
+--------------------------------------------------
+UPDATE EVERYTHING
+--------------------------------------------------
+
+Update ALL imports.
+
+Update ALL package.json files.
+
+Update pnpm-workspace.yaml
+
+Update tsconfig references.
+
+Update path aliases.
+
+Update build scripts.
+
+Update Vite configs.
+
+Update OpenAPI generation.
+
+Update Drizzle configs.
+
+Update all internal imports.
+
+Fix every broken path.
+
+No broken imports are allowed.
+
+--------------------------------------------------
+CODE CLEANUP
+--------------------------------------------------
+
+Remove
+
+unused variables
+
+unused functions
+
+unused interfaces
+
+unused types
+
+unused exports
+
+unused dependencies
+
+duplicate helper functions
+
+duplicate constants
+
+duplicate utilities
+
+dead code
+
+commented code
+
+legacy files
+
+empty folders
+
+--------------------------------------------------
+DO NOT TOUCH
+--------------------------------------------------
+
+Do NOT change
+
+scanner algorithms
+
+scan phases
+
+HTTP logic
+
+database schema
+
+API contracts
+
+OpenAPI schema
+
+finding logic
+
+verification logic
+
+worker logic
+
+business logic
+
+Only move code if required.
+
+--------------------------------------------------
+VERIFY EVERYTHING
+--------------------------------------------------
+
+When finished:
+
+Run TypeScript build.
+
+Run lint.
+
+Run pnpm install.
+
+Run every workspace build.
+
+Fix every compilation error.
+
+Fix every import error.
+
+Fix every path error.
+
+Fix every workspace reference.
+
+Fix every package reference.
+
+Continue until the project builds successfully.
+
+--------------------------------------------------
+FINAL REQUIREMENTS
+--------------------------------------------------
+
+The finished repository must:
+
+✅ Build successfully
+
+✅ Have zero TypeScript errors
+
+✅ Have zero missing imports
+
+✅ Have zero unused dependencies
+
+✅ Have zero duplicate folders
+
+✅ Have a professional folder structure
+
+✅ Preserve all SentinelX functionality
+
+✅ Be production ready
+
+--------------------------------------------------
+OUTPUT
+--------------------------------------------------
+
+After completing the refactor:
+
+1. Print the old folder structure.
+
+2. Print the new folder structure.
+
+3. List every file moved.
+
+4. List every file deleted.
+
+5. List every dependency removed.
+
+6. List every configuration updated.
+
+7. Confirm that the application builds successfully.
+
+Do not stop until every task is complete.
