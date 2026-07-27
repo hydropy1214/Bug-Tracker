@@ -1,5 +1,5 @@
 import type { PhaseContext } from '../types';
-import { isContextualReflection } from '../../scanner';
+import { isContextualReflection } from '../context';
 import { createFinding } from '../utils/findings';
 import { probe } from '../utils/http';
 

@@ -60,11 +60,13 @@ export function Projects() {
     );
   };
 
-  const filtered = projects?.filter(p => {
+  const projectList = Array.isArray(projects) ? projects : [];
+
+  const filtered = projectList.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.description?.toLowerCase().includes(search.toLowerCase());
     const matchesFilter = filter === "all" || p.status === filter;
     return matchesSearch && matchesFilter;
-  }) ?? [];
+  });
 
   return (
     <motion.div variants={containerVariants} initial="hidden" animate="show" className="space-y-6">

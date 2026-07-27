@@ -1,35 +1,16 @@
 /**
  * Public scanner facade.
  *
- * Keeping the facade separate from the compatibility implementation makes the
- * phase-by-phase migration safe for the worker, routes, and future consumers.
+ * All exports come from the modular scanner/ subdirectory.
+ * The legacy monolithic scanner.ts has been removed.
  */
+
+// ── Context / shared utilities ───────────────────────────────────────────────
 export {
   SCAN_POLICIES,
   activeProbesAllowed,
-  checkApiSurface,
-  checkCrlfInjection,
-  checkDns,
-  checkHeaders,
-  checkHostHeaderInjection,
-  checkHttpRequestSmuggling,
-  checkIdorAndBola,
-  checkJwtWeaknesses,
-  checkLog4ShellSurface,
-  checkPathTraversal,
-  checkPorts,
-  checkRateLimiting,
-  checkSensitivePaths,
-  checkSubdomainTakeover,
-  checkTls,
-  checkWayback,
-  checkWebApp,
-  checkWhois,
   discoverToolCapabilities,
-  discoverSubdomains,
-  fingerprint,
   getScanAuthHeaders,
-  getIpInfo,
   isContextualReflection,
   isWafChallengeDetected,
   isWafChallengeResponse,
@@ -37,12 +18,12 @@ export {
   noteWafChallengeDetected,
   remainingScanRequests,
   remainingVerificationRequests,
-  reserveVerificationRequest,
   reserveScanRequest,
+  reserveVerificationRequest,
   resolveScanPolicy,
   runActiveChecks,
-  scanTarget,
-} from '../scanner';
+} from './context';
+
 export type {
   LogFn,
   RealFinding,
@@ -52,4 +33,29 @@ export type {
   ScanType,
   Target,
   ToolCapability,
-} from '../scanner';
+} from './context';
+
+// ── Phases ───────────────────────────────────────────────────────────────────
+export { checkApiSurface } from './phases/api-surface';
+export { checkCrlfInjection } from './phases/crlf';
+export { checkDns } from './phases/dns';
+export { checkHeaders } from './phases/headers';
+export { checkHostHeaderInjection } from './phases/host-header';
+export { checkHttpRequestSmuggling } from './phases/request-smuggling';
+export { checkIdorAndBola } from './phases/idor';
+export { checkJwtWeaknesses } from './phases/jwt';
+export { checkLog4ShellSurface } from './phases/log4shell';
+export { checkPathTraversal } from './phases/path-traversal';
+export { checkPorts } from './phases/ports';
+export { checkRateLimiting } from './phases/rate-limiting';
+export { checkSensitivePaths } from './phases/sensitive-paths';
+export { checkSubdomainTakeover, discoverSubdomains } from './phases/subdomains';
+export { checkTls } from './phases/tls';
+export { checkWayback } from './phases/wayback';
+export { checkWebApp } from './phases/webapp-probes';
+export { checkWhois } from './phases/whois';
+export { fingerprint } from './phases/tech-fingerprint';
+export { getIpInfo } from './phases/ip-info';
+
+// ── Orchestrator ─────────────────────────────────────────────────────────────
+export { scanTarget } from './orchestrator';

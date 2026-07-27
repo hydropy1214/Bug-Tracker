@@ -1,5 +1,5 @@
 import type { LogFn, RealFinding, ScanPolicy, Target } from '../../types';
-import { activeProbesAllowed } from '../../../scanner';
+import { activeProbesAllowed } from '../../context';
 import { verifyGraphql } from './graphql';
 import { logRestrictedVerificationModules } from './restricted';
 import { verifySsti } from './ssti';

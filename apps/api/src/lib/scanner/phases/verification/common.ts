@@ -1,4 +1,4 @@
-import { activeProbesAllowed, reserveVerificationRequest } from '../../../scanner';
+import { activeProbesAllowed, reserveVerificationRequest } from '../../context';
 import { probe, type HttpProbeResult } from '../../utils/http';
 
 export function endpointFromFinding(
