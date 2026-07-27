@@ -1,10 +1,10 @@
 import {
   activeProbesAllowed,
   getScanAuthHeaders,
+  isWafChallengeResponse,
   noteWafChallengeDetected,
   reserveScanRequest,
-} from '../../scanner';
-import { isWafOrRateLimit } from './waf';
+} from '../context';
 
 export interface HttpProbeResult {
   status: number;
@@ -21,13 +21,15 @@ export interface HttpProbeOptions {
   timeoutMs?: number;
   followRedirects?: boolean;
   maxRetries?: number;
+  skipAuth?: boolean;
 }
 
 /**
- * Shared fetch wrapper for extracted phases.
+ * Shared fetch wrapper for all scanner phases.
  *
- * It applies scan budget, auth headers, timeouts, bounded retries, and WAF
- * detection consistently. Active phase callers receive null after a challenge.
+ * Applies scan budget, auth headers, timeouts, bounded retries, and WAF
+ * detection consistently. Returns null if the budget is exhausted, WAF
+ * blocks the scan, or all retries fail.
  */
 export async function probe(
   url: string,
@@ -41,11 +43,12 @@ export async function probe(
     const started = Date.now();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000);
     try {
+      const authHeaders = options.skipAuth ? {} : getScanAuthHeaders();
       const response = await fetch(url, {
         method: options.method ?? 'GET',
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; SentinelX/2.0; security-scanner)',
-          ...getScanAuthHeaders(),
+          ...authHeaders,
           ...(options.headers ?? {}),
         },
         body: options.body,
@@ -57,15 +60,15 @@ export async function probe(
         headers[key.toLowerCase()] = value;
       });
       const body = (await response.text().catch(() => '')).slice(0, 15_000);
-      if (isWafOrRateLimit(response.status, headers)) {
-        if (response.status !== 429) await noteWafChallengeDetected();
+      if (isWafChallengeResponse(response.status, headers)) {
+        await noteWafChallengeDetected();
         return null;
       }
       return {
         status: response.status,
         headers,
         body,
-        finalUrl: response.url,
+        finalUrl: response.url || url,
         durationMs: Date.now() - started,
       };
     } catch {
