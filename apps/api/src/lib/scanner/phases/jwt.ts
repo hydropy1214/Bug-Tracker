@@ -123,7 +123,7 @@ export async function checkJwtWeaknesses(target: Target, onLog: LogFn): Promise<
   if (!r) return findings;
 
   const tokenRegex = /eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g;
-  const tokens = r.body.match(tokenRegex) ?? [];
+  const tokens: string[] = r.body.match(tokenRegex) ?? [];
   const authHeader = r.headers['authorization'] ?? '';
   if (authHeader.startsWith('Bearer ')) tokens.push(authHeader.slice(7));
 
