@@ -4,3 +4,4 @@
 - [SentinelX scan recovery](sentinelx-recovery.md) — restart recovery, browser rehydration, and database-side monotonic progress keep scans resumable and truthful
 - [SentinelX refactor boundaries](sentinelx-refactor.md) — scanner extraction stays compatibility-first; cancellation is a database-backed terminal state
 - [SentinelX monorepo layout](sentinelx-monorepo-layout.md) — live code uses apps/packages; artifact metadata keeps stable IDs and must be replaced through validation
+- [SentinelX Replit preview](sentinelx-replit-preview.md) — direct service checks distinguish healthy workflows from a refused shared preview proxy
