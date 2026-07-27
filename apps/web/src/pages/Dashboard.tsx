@@ -770,7 +770,7 @@ export function Dashboard() {
               </span>
               <span className="text-muted-foreground/50">·</span>
               <span>
-                21 phases · nmap · dig · whois · openssl · WAF bypass · 50+ paths · CVE lookup
+                33 phases · crawl/forms/API inventory · baseline SQLi/XSS · WAF · nmap · dig · whois · CVE lookup
               </span>
               <span className="text-muted-foreground/50">·</span>
               <span className="text-primary/70">Est. ~10–15 min</span>
@@ -869,7 +869,7 @@ export function Dashboard() {
             </span>
             <span className="ml-auto text-[10px] font-mono text-muted-foreground uppercase">
               {findings.length} total finding{findings.length === 1 ? '' : 's'} ·{' '}
-              {logLines.filter((line) => /\[Phase \d+/.test(line)).length} phase events
+              {logLines.filter((line) => /\[Phase \d+[a-z]?/i.test(line)).length} phase events
             </span>
           </div>
           <RiskSurfaceGrid
@@ -915,7 +915,7 @@ export function Dashboard() {
             >
               {logLines.length === 0 && phase === 'scanning' && (
                 <div className="text-muted-foreground animate-pulse">
-                  Initialising scan engine (21 phases)...
+                  Initialising scanner — crawling the attack surface before verification...
                 </div>
               )}
               {logLines.map((line, i) => {

@@ -36,6 +36,8 @@ import { checkSensitivePaths } from './phases/sensitive-paths';
 import { checkWayback } from './phases/wayback';
 import { checkWebApp } from './phases/webapp-probes';
 import { checkApiSurface } from './phases/api-surface';
+import { discoverAttackSurface } from './phases/surface-discovery';
+import { runDeepInputTesting } from './phases/deep-input-testing';
 import { checkHostHeaderInjection } from './phases/host-header';
 import { checkCrlfInjection } from './phases/crlf';
 import { checkPathTraversal } from './phases/path-traversal';
@@ -195,6 +197,16 @@ export async function scanTarget(
       await onLog(`[${ts()}] [Phase 11] Wayback Machine...`);
       add(await safePhase('Phase 11 (Wayback)', () => checkWayback(target.hostname, onLog), []));
 
+      // Phase 11b: Crawl and inventory the real attack surface before
+      // parameter-based testing. This avoids treating the home page as the
+      // entire application.
+      await onLog(`[${ts()}] [Phase 11b] Crawling same-origin attack surface...`);
+      const surface = await safePhase(
+        'Phase 11b (Attack-surface discovery)',
+        () => discoverAttackSurface(target, policy, onLog),
+        { endpoints: [], parameters: [], crawled: [], forms: 0, truncated: false },
+      );
+
       // Phase 12: Web app probes
       await onLog(`[${ts()}] [Phase 12] Web app probes...`);
       add(await runActiveChecks(() => checkWebApp(target, onLog), []));
@@ -202,6 +214,16 @@ export async function scanTarget(
       // Phase 13: API surface
       await onLog(`[${ts()}] [Phase 13] API surface discovery...`);
       add(await runActiveChecks(() => checkApiSurface(target, onLog), []));
+
+      // Phase 13e: use the discovered routes, forms, and parameters for
+      // baseline-aware SQLi, XSS, redirect, and traversal verification.
+      await onLog(`[${ts()}] [Phase 13e] Deep discovered-input testing...`);
+      add(
+        await runActiveChecks(
+          () => runDeepInputTesting(target, policy, surface, onLog),
+          [],
+        ),
+      );
 
       // Phase 13b: API credential leak checks
       await onLog(`[${ts()}] [Phase 13b] API credential leak checks...`);

@@ -20,7 +20,14 @@ import { decryptAuthHeaders } from "./encryption";
 import { logger } from "./logger";
 
 const TICK_MS = 2_000; // keep the queue responsive without busy-polling the database
-const SCANNER_PHASE_COUNT = 24;
+const SCANNER_PHASE_IDS = [
+  "1", "2", "3", "4", "5", "5b", "6", "7", "8", "9", "10", "11", "11b",
+  "12", "13", "13b", "13c", "13d", "13e", "14", "15", "16", "17", "18",
+  "19", "20", "21", "22", "23", "24", "25", "26", "28",
+] as const;
+type ScannerPhaseId = (typeof SCANNER_PHASE_IDS)[number];
+const SCANNER_PHASE_COUNT = SCANNER_PHASE_IDS.length;
+const SCANNER_PHASE_INDEX = new Map(SCANNER_PHASE_IDS.map((id, index) => [id, index + 1]));
 
 class ScanCanceledError extends Error {
   constructor() {
@@ -204,9 +211,12 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
         await log(msg);
         // Scanner logs carry the authoritative phase number. Use it for
         // progress so long-running phases (notably nmap) do not look frozen.
-        const phaseMatch = msg.match(/\[Phase\s+(\d+)(?:[a-z])?\]/i);
+        const phaseMatch = msg.match(/\[Phase\s+(\d+)([a-z])?\]/i);
         if (phaseMatch) {
-          const scannerPhase = Number.parseInt(phaseMatch[1]!, 10);
+          const phaseId = `${phaseMatch[1]}${phaseMatch[2] ?? ""}`.toLowerCase();
+          const scannerPhase =
+            SCANNER_PHASE_INDEX.get(phaseId as ScannerPhaseId) ??
+            Number.parseInt(phaseMatch[1]!, 10);
           if (Number.isFinite(scannerPhase)) {
             currentPhase = Math.max(currentPhase, Math.min(scannerPhase, SCANNER_PHASE_COUNT));
             await setProgress(
