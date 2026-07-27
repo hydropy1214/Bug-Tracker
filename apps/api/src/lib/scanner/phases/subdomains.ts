@@ -55,9 +55,46 @@ export async function discoverSubdomains(
   }
 
   const COMMON_SUBS = [
-    'www','mail','api','dev','staging','test','admin','portal','dashboard','manage','cdn','static',
-    'assets','db','mysql','redis','elastic','kibana','jenkins','gitlab','jira','grafana',
-    'monitoring','logs','backup','old','legacy','login','auth','sso','support','help','status',
+    // Core services
+    'www','www2','mail','mail2','smtp','imap','pop','pop3','webmail','email','mx','mx1','mx2',
+    // API / Application
+    'api','api2','api3','apiv1','apiv2','app','app2','application','apps','gateway','gw',
+    // Dev / Staging environments
+    'dev','dev2','dev3','staging','stage','stg','test','test2','uat','qa','qa2','demo',
+    'beta','alpha','preprod','pre-prod','prod','production','release','sandbox','lab',
+    // Admin / Management
+    'admin','administrator','portal','dashboard','manage','management','console','panel',
+    'control','cpanel','whm','webadmin','sysadmin',
+    // Infrastructure
+    'cdn','static','assets','img','images','media','upload','uploads','files','file',
+    'storage','bucket','blob','data','download','downloads',
+    // Database / Cache
+    'db','db2','database','mysql','postgres','postgresql','mongodb','redis','memcache',
+    'elastic','elasticsearch','solr','cassandra',
+    // Monitoring / Logging
+    'monitoring','monitor','metrics','kibana','grafana','prometheus','logs','log',
+    'logging','splunk','datadog','newrelic','apm','tracing',
+    // CI/CD / Dev Tools
+    'jenkins','gitlab','github','bitbucket','git','svn','ci','cd','deploy','build',
+    'jira','confluence','wiki','docs','documentation','artifactory','nexus','sonar',
+    // Auth / SSO
+    'login','auth','sso','oauth','oidc','idp','identity','accounts','account','register',
+    // Support / Customer
+    'support','help','helpdesk','ticket','tickets','service','servicedesk','status',
+    'statuspage','uptime','feedback',
+    // Networking
+    'vpn','remote','citrix','rdp','jump','bastion','ssh','proxy','firewall','router',
+    'switch','gateway','nat','loadbalancer','lb',
+    // Cloud / Container
+    'k8s','kubernetes','docker','registry','harbor','rancher','nomad','vault','consul',
+    // Communication
+    'chat','slack','teams','meet','video','conference','ftp','sftp','transfer',
+    // Old / Backup
+    'old','legacy','archive','backup','bak','tmp','temp',
+    // Misc common
+    'internal','intranet','extranet','corp','corporate','secure','private','public',
+    'home','host','server','web','site','www-dev','www-staging','m','mobile','wap',
+    'ns1','ns2','ns3','dns','dns1','dns2',
   ];
   await onLog(`[${ts()}] DNS brute-forcing ${COMMON_SUBS.length} common subdomains...`);
   let bruteFound = 0;

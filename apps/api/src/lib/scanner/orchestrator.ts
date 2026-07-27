@@ -28,16 +28,24 @@ import { checkDns } from './phases/dns';
 import { getIpInfo } from './phases/ip-info';
 import { checkWhois } from './phases/whois';
 import { discoverSubdomains, checkSubdomainTakeover } from './phases/subdomains';
+import { checkSubdomainPermutations } from './phases/subdomain-permutations';
 import { checkPorts } from './phases/ports';
 import { checkTls } from './phases/tls';
 import { checkHeaders } from './phases/headers';
 import { fingerprint, type TechProfile } from './phases/tech-fingerprint';
+import { checkFaviconHash } from './phases/favicon-hash';
 import { checkSensitivePaths } from './phases/sensitive-paths';
 import { checkWayback } from './phases/wayback';
+import { checkGoogleDorking } from './phases/google-dorking';
+import { checkGitHubDorking } from './phases/github-dorking';
+import { checkCloudBuckets } from './phases/cloud-buckets';
+import { harvestEmails } from './phases/email-harvesting';
+import { checkLeakDetection } from './phases/leak-detection';
 import { checkWebApp } from './phases/webapp-probes';
 import { checkApiSurface } from './phases/api-surface';
 import { discoverAttackSurface } from './phases/surface-discovery';
 import { runDeepInputTesting } from './phases/deep-input-testing';
+import { discoverParameters } from './phases/parameter-discovery';
 import { checkHostHeaderInjection } from './phases/host-header';
 import { checkCrlfInjection } from './phases/crlf';
 import { checkPathTraversal } from './phases/path-traversal';
@@ -46,6 +54,8 @@ import { checkIdorAndBola } from './phases/idor';
 import { checkHttpRequestSmuggling } from './phases/request-smuggling';
 import { checkLog4ShellSurface } from './phases/log4shell';
 import { checkRateLimiting } from './phases/rate-limiting';
+import { checkOpenRedirect } from './phases/open-redirect';
+import { checkIpRange } from './phases/ip-range';
 import {
   checkOpenRegistration,
   checkDefaultCredentials,
@@ -113,7 +123,7 @@ export async function scanTarget(
         `[${ts()}] POLICY  : ${policy.requestBudget} request budget · ${policy.timeoutMs}ms timeout · concurrency ${policy.maxConcurrency}`,
       );
       await onLog(
-        `[${ts()}] TOOLS   : nmap · dig · whois · openssl · fetch · crt.sh · ipinfo.io · Wayback`,
+        `[${ts()}] TOOLS   : nmap · dig · whois · openssl · fetch · crt.sh · ipinfo.io · Wayback · GitHub · S3/GCS/Azure · psbdmp`,
       );
       if (authHeaders && Object.keys(authHeaders).length > 0) {
         await onLog(
@@ -140,6 +150,10 @@ export async function scanTarget(
       await onLog(`[${ts()}] [Phase 3] IP geolocation & ASN intelligence...`);
       await safePhase('Phase 3 (IP info)', () => getIpInfo(target.hostname, onLog), undefined as void);
 
+      // Phase 3b: IP range / ASN / co-hosted hosts (reconFTW)
+      await onLog(`[${ts()}] [Phase 3b] IP range, ASN mapping, and reverse DNS sweep...`);
+      add(await safePhase('Phase 3b (IP range)', () => checkIpRange(target, onLog), []));
+
       // Phase 4: WHOIS
       if (assetType !== 'ip') {
         await onLog(`[${ts()}] [Phase 4] WHOIS domain intelligence...`);
@@ -160,6 +174,19 @@ export async function scanTarget(
         await onLog(`[${ts()}] Total subdomains in scope: ${discoveredSubs.length}`);
         await onLog(`[${ts()}] [Phase 5b] Subdomain takeover detection...`);
         add(await runActiveChecks(() => checkSubdomainTakeover(discoveredSubs, onLog), []));
+
+        // Phase 5c: Subdomain permutations (reconFTW)
+        await onLog(`[${ts()}] [Phase 5c] Subdomain permutation sweep...`);
+        const permResult = await safePhase(
+          'Phase 5c (Subdomain permutations)',
+          () => checkSubdomainPermutations(target.hostname, discoveredSubs, onLog),
+          { subs: [] as string[], findings: [] as RealFinding[] },
+        );
+        add(permResult.findings);
+        if (permResult.subs.length > 0) {
+          discoveredSubs.push(...permResult.subs);
+          await onLog(`[${ts()}] Permutation added ${permResult.subs.length} new subdomain(s). Total: ${discoveredSubs.length}`);
+        }
       }
 
       // Phase 6: Port scanning
@@ -189,6 +216,10 @@ export async function scanTarget(
           `[${ts()}] Stack detected: ${techs.map((t) => `${t.name} (${t.category})`).join(' · ')}`,
         );
 
+      // Phase 9b: Favicon hash fingerprinting (reconFTW / Shodan-style)
+      await onLog(`[${ts()}] [Phase 9b] Favicon hash fingerprinting (Shodan MurmurHash3)...`);
+      add(await safePhase('Phase 9b (Favicon hash)', () => checkFaviconHash(target, onLog), []));
+
       // Phase 10: Sensitive path discovery
       await onLog(`[${ts()}] [Phase 10] Sensitive path discovery...`);
       add(await runActiveChecks(() => checkSensitivePaths(target, true, onLog), []));
@@ -196,6 +227,26 @@ export async function scanTarget(
       // Phase 11: Wayback Machine
       await onLog(`[${ts()}] [Phase 11] Wayback Machine...`);
       add(await safePhase('Phase 11 (Wayback)', () => checkWayback(target.hostname, onLog), []));
+
+      // Phase 11c: Google dorking — generate dork queries + active path probing (reconFTW)
+      await onLog(`[${ts()}] [Phase 11c] Google dorking & sensitive file probing...`);
+      add(await safePhase('Phase 11c (Google dorking)', () => checkGoogleDorking(target, onLog), []));
+
+      // Phase 11d: GitHub dorking — search public repos/code for secrets (reconFTW)
+      await onLog(`[${ts()}] [Phase 11d] GitHub dorking — searching public repos/code...`);
+      add(await safePhase('Phase 11d (GitHub dorking)', () => checkGitHubDorking(target, onLog), []));
+
+      // Phase 11e: Cloud bucket enumeration — S3/GCS/Azure (reconFTW)
+      await onLog(`[${ts()}] [Phase 11e] Cloud bucket enumeration (S3 · GCS · Azure)...`);
+      add(await safePhase('Phase 11e (Cloud buckets)', () => checkCloudBuckets(target, onLog), []));
+
+      // Phase 11f: Email harvesting + SPF/DMARC analysis (reconFTW)
+      await onLog(`[${ts()}] [Phase 11f] Email harvesting & SPF/DMARC analysis...`);
+      add(await safePhase('Phase 11f (Email harvesting)', () => harvestEmails(target, onLog), []));
+
+      // Phase 11g: Paste site / leak detection (reconFTW)
+      await onLog(`[${ts()}] [Phase 11g] Leak detection — paste sites & public dumps...`);
+      add(await safePhase('Phase 11g (Leak detection)', () => checkLeakDetection(target, onLog), []));
 
       // Phase 11b: Crawl and inventory the real attack surface before
       // parameter-based testing. This avoids treating the home page as the
@@ -221,6 +272,15 @@ export async function scanTarget(
       add(
         await runActiveChecks(
           () => runDeepInputTesting(target, policy, surface, onLog),
+          [],
+        ),
+      );
+
+      // Phase 13f: Parameter discovery (Arjun-style, reconFTW)
+      await onLog(`[${ts()}] [Phase 13f] Parameter discovery (hidden/undocumented params)...`);
+      add(
+        await runActiveChecks(
+          () => discoverParameters(target, surface.endpoints.map((e) => e.url), onLog),
           [],
         ),
       );
@@ -285,6 +345,10 @@ export async function scanTarget(
       // Phase 21: Rate limiting absence
       await onLog(`[${ts()}] [Phase 21] Rate limiting / brute-force protection check...`);
       add(await runActiveChecks(() => checkRateLimiting(target, onLog), []));
+
+      // Phase 27: Open redirect (reconFTW)
+      await onLog(`[${ts()}] [Phase 27] Open redirect detection...`);
+      add(await runActiveChecks(() => checkOpenRedirect(target, onLog), []));
 
       // Phase 22: Advanced probes (SSTI, XXE, SSRF, Deserialization, CMDi, NoSQL)
       await onLog(
