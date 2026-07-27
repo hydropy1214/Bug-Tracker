@@ -399,6 +399,27 @@ const CAPABILITIES = [
   },
 ];
 
+const QUICK_STARTS = [
+  {
+    icon: <Globe className="h-4 w-4 text-primary" />,
+    label: 'Website',
+    description: 'Headers, TLS, paths & WAF',
+    target: 'https://example.com',
+  },
+  {
+    icon: <Cpu className="h-4 w-4 text-cyan-300" />,
+    label: 'API',
+    description: 'OpenAPI, auth & data leaks',
+    target: 'https://api.example.com',
+  },
+  {
+    icon: <Server className="h-4 w-4 text-blue-300" />,
+    label: 'Host',
+    description: 'Ports, services & exposure',
+    target: 'https://app.example.com',
+  },
+];
+
 const RISK_SURFACES = [
   {
     key: 'api',
@@ -520,6 +541,7 @@ export function Dashboard() {
   const [projectId, setProjectId] = useState<number | null>(null);
   const [scanData, setScanData] = useState<ScanStatus | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [pollingIssue, setPollingIssue] = useState<string | null>(null);
   const [target, setTarget] = useState<string>('');
 
   const logRef = useRef<HTMLDivElement>(null);
@@ -559,7 +581,20 @@ export function Dashboard() {
     setPhase('error');
   }, []);
 
-  const startPolling = useScanPolling(applyScanStatus, handleMissingScan);
+  const handlePollingError = useCallback((message: string) => {
+    setPollingIssue(message);
+  }, []);
+
+  const handlePollingRecovered = useCallback(() => {
+    setPollingIssue(null);
+  }, []);
+
+  const startPolling = useScanPolling(
+    applyScanStatus,
+    handleMissingScan,
+    handlePollingError,
+    handlePollingRecovered,
+  );
 
   const stopScan = async () => {
     if (!scanId) return;
@@ -598,6 +633,7 @@ export function Dashboard() {
       return;
     }
     setErrorMsg(null);
+    setPollingIssue(null);
     setPhase('scanning');
     setScanData(null);
     setScanId(null);
@@ -640,6 +676,7 @@ export function Dashboard() {
     setProjectId(null);
     setScanData(null);
     setErrorMsg(null);
+    setPollingIssue(null);
     setUrl('');
     setTarget('');
     window.localStorage.removeItem('sentinelx.activeScan');
@@ -792,6 +829,13 @@ export function Dashboard() {
         <div className="rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-center gap-3">
           <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
           <span className="text-sm font-mono text-red-300">{errorMsg}</span>
+        </div>
+      )}
+
+      {phase === 'scanning' && pollingIssue && (
+        <div className="flex items-center gap-3 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-4 py-3">
+          <RefreshCw className="h-4 w-4 flex-shrink-0 animate-spin text-yellow-300" />
+          <span className="text-xs font-mono text-yellow-200">{pollingIssue}</span>
         </div>
       )}
 
@@ -1113,22 +1157,58 @@ export function Dashboard() {
 
       {/* ── Idle: capability grid ───────────────────────────────────────────── */}
       {phase === 'idle' && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="grid gap-3 md:grid-cols-2 lg:grid-cols-3"
-        >
-          {CAPABILITIES.map(({ icon, title, desc }) => (
-            <div key={title} className="rounded-md border border-border bg-card p-4">
-              <div className="flex items-center gap-2 mb-2">
-                {icon}
-                <span className="text-xs font-mono font-bold text-foreground">{title}</span>
+        <>
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}
+            className="space-y-3"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-mono font-bold uppercase tracking-[0.18em] text-primary">Quick start</p>
+                <p className="mt-1 text-xs text-muted-foreground">Choose a target shape to prefill the scanner.</p>
               </div>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">{desc}</p>
+              <span className="hidden text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 sm:block">Authorized targets only</span>
             </div>
-          ))}
-        </motion.div>
+            <div className="grid gap-3 md:grid-cols-3">
+              {QUICK_STARTS.map(({ icon, label, description, target }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    setUrl(target);
+                    inputRef.current?.focus();
+                  }}
+                  className="group rounded-md border border-border bg-card p-4 text-left transition-all hover:border-primary/40 hover:bg-accent/30"
+                >
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="rounded border border-border bg-background p-1.5">{icon}</span>
+                    <span className="text-xs font-mono font-bold uppercase tracking-wider text-foreground group-hover:text-primary">{label}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">{description}</p>
+                  <p className="mt-2 truncate text-[10px] font-mono text-muted-foreground/50">{target}</p>
+                </button>
+              ))}
+            </div>
+          </motion.div>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.25 }}
+            className="grid gap-3 md:grid-cols-2 lg:grid-cols-3"
+          >
+            {CAPABILITIES.map(({ icon, title, desc }) => (
+              <div key={title} className="rounded-md border border-border bg-card p-4">
+                <div className="mb-2 flex items-center gap-2">
+                  {icon}
+                  <span className="text-xs font-mono font-bold text-foreground">{title}</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">{desc}</p>
+              </div>
+            ))}
+          </motion.div>
+        </>
       )}
     </motion.div>
   );

@@ -4,6 +4,8 @@ import { ScanStatus } from '@/components/dashboard/scan-types';
 export function useScanPolling(
   applyScanStatus: (data: ScanStatus) => boolean,
   onMissing: () => void,
+  onError?: (message: string) => void,
+  onRecovered?: () => void,
 ) {
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -11,6 +13,7 @@ export function useScanPolling(
     (id: number) => {
       if (pollRef.current) clearTimeout(pollRef.current);
       let stopped = false;
+      let consecutiveFailures = 0;
       const poll = async () => {
         try {
           const response = await fetch(`/api/scans/${id}/status`, { cache: 'no-store' });
@@ -21,17 +24,26 @@ export function useScanPolling(
             throw new Error(`status ${response.status}`);
           } else {
             const data = (await response.json()) as ScanStatus;
+            if (consecutiveFailures > 0) onRecovered?.();
+            consecutiveFailures = 0;
             stopped = !applyScanStatus(data);
           }
-        } catch {
-          // Keep polling through transient API restarts.
+        } catch (error) {
+          consecutiveFailures += 1;
+          if (consecutiveFailures === 3) {
+            onError?.(
+              error instanceof Error
+                ? `Live scan updates paused (${error.message}). Retrying…`
+                : 'Live scan updates paused. Retrying…',
+            );
+          }
         }
         if (!stopped) pollRef.current = setTimeout(poll, 1200);
         else pollRef.current = null;
       };
       void poll();
     },
-    [applyScanStatus, onMissing],
+    [applyScanStatus, onError, onMissing, onRecovered],
   );
 
   useEffect(

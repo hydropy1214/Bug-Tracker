@@ -14,6 +14,30 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   const { data: health } = useHealthCheck();
   const isOnline = health?.status === "ok" || !health;
+  const [activeScanCount, setActiveScanCount] = useState(0);
+
+  useEffect(() => {
+    let mounted = true;
+    const refreshActiveScans = async () => {
+      try {
+        const response = await fetch("/api/scans", { cache: "no-store" });
+        if (!response.ok) return;
+        const scans = await response.json() as Array<{ status?: string }>;
+        if (mounted) {
+          setActiveScanCount(scans.filter((scan) => scan.status === "pending" || scan.status === "running").length);
+        }
+      } catch {
+        // The health indicator remains the source of truth when scan history is unavailable.
+      }
+    };
+
+    void refreshActiveScans();
+    const timer = window.setInterval(refreshActiveScans, 5000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const toggleSidebar = () => setCollapsed(!collapsed);
 
@@ -66,33 +90,41 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 px-3 pt-6 space-y-1 overflow-hidden">
           {!collapsed && <div className="text-[10px] font-mono text-muted-foreground/50 tracking-widest px-3 mb-3 uppercase">Workspace</div>}
 
-          <Link href="/" className={cn(
+          <Link href="/" title={collapsed ? "Scan Engine" : undefined} className={cn(
             "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group",
             location === "/" ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
           )}>
             <LayoutDashboard className={cn("w-4 h-4 flex-shrink-0", location === "/" ? "text-primary" : "group-hover:text-foreground")} />
             {!collapsed && <span>Scan Engine</span>}
           </Link>
-          <Link href="/projects" className={cn(
+          <Link href="/projects" title={collapsed ? "Projects" : undefined} className={cn(
             "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group",
             location.startsWith("/projects") ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
           )}>
             <FolderKanban className={cn("w-4 h-4 flex-shrink-0", location.startsWith("/projects") ? "text-primary" : "group-hover:text-foreground")} />
             {!collapsed && <span>Projects</span>}
           </Link>
-          <Link href="/scans" className={cn(
+          <Link href="/scans" title={collapsed ? "All Scans" : undefined} className={cn(
             "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group",
             location === "/scans" ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
           )}>
             <ListChecks className={cn("w-4 h-4 flex-shrink-0", location === "/scans" ? "text-primary" : "group-hover:text-foreground")} />
             {!collapsed && <span>All Scans</span>}
+            {activeScanCount > 0 && (
+              <span className={cn(
+                "ml-auto min-w-5 rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-center text-[9px] font-mono font-bold text-primary",
+                collapsed && "absolute right-1 top-1",
+              )}>
+                {activeScanCount}
+              </span>
+            )}
           </Link>
         </nav>
 
         {/* System & Footer */}
         <div className="px-3 pb-4 space-y-1 border-t border-border pt-3 mt-3">
           {!collapsed && <div className="text-[10px] font-mono text-muted-foreground/50 tracking-widest px-3 mb-2 uppercase">System</div>}
-          <Link href="/settings" className={cn(
+          <Link href="/settings" title={collapsed ? "Settings" : undefined} className={cn(
             "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all group",
             location === "/settings" ? "nav-active text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
           )}>
