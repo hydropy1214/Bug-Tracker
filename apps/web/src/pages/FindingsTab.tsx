@@ -429,7 +429,7 @@ export function FindingsTab({ projectId }: { projectId: number }) {
       </div>
       
       {/* Mobile detail dialog (when side panel is hidden via CSS) */}
-      <Dialog open={!!viewFindingId && window.innerWidth < 1280} onOpenChange={(o) => !o && setViewFindingId(null)}>
+      <Dialog open={!!viewFindingId} onOpenChange={(o) => !o && setViewFindingId(null)} modal={false}>
         <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto bg-card border-border sm:rounded-md xl:hidden">
           <DialogHeader>
             <DialogTitle className="font-mono text-sm text-primary uppercase tracking-wider flex items-center gap-2">

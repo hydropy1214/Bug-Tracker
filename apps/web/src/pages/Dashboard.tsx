@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Link } from 'wouter';
 import {
   Shield,
   Search,
@@ -22,6 +23,7 @@ import {
   Fingerprint,
   Eye,
   Cpu,
+  FolderOpen,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
@@ -79,6 +81,7 @@ interface ScanStatus {
 interface PersistedScan {
   scanId: number;
   target: string;
+  projectId?: number;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -514,6 +517,7 @@ export function Dashboard() {
   const [url, setUrl] = useState('');
   const [phase, setPhase] = useState<Phase>('idle');
   const [scanId, setScanId] = useState<number | null>(null);
+  const [projectId, setProjectId] = useState<number | null>(null);
   const [scanData, setScanData] = useState<ScanStatus | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [target, setTarget] = useState<string>('');
@@ -580,6 +584,7 @@ export function Dashboard() {
       setScanId(persisted.scanId);
       setTarget(persisted.target);
       setUrl(persisted.target);
+      if (persisted.projectId) setProjectId(persisted.projectId);
       startPolling(persisted.scanId);
     } catch {
       window.localStorage.removeItem('sentinelx.activeScan');
@@ -613,11 +618,13 @@ export function Dashboard() {
       }
       const data = await res.json();
       setScanId(data.scanId);
+      if (data.projectId) setProjectId(data.projectId);
       window.localStorage.setItem(
         'sentinelx.activeScan',
         JSON.stringify({
           scanId: data.scanId,
           target: normalized,
+          projectId: data.projectId ?? undefined,
         } satisfies PersistedScan),
       );
       startPolling(data.scanId);
@@ -630,6 +637,7 @@ export function Dashboard() {
   const reset = () => {
     setPhase('idle');
     setScanId(null);
+    setProjectId(null);
     setScanData(null);
     setErrorMsg(null);
     setUrl('');
@@ -1043,11 +1051,20 @@ export function Dashboard() {
                 {suspectedFindings.length !== 1 ? 's' : ''}
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <Zap className="w-3 h-3 text-primary" />
               <span className="text-[10px] font-mono text-muted-foreground uppercase">
                 Full Deep Scan
               </span>
+              {projectId && (
+                <Link
+                  href={`/projects/${projectId}`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-primary/40 bg-primary/10 text-primary text-[10px] font-mono uppercase tracking-wider hover:bg-primary/20 transition-colors"
+                >
+                  <FolderOpen className="w-3 h-3" />
+                  View Project
+                </Link>
+              )}
             </div>
           </div>
 

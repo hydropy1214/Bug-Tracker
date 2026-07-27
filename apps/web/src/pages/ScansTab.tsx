@@ -329,7 +329,7 @@ export function ScansTab({ projectId, assetCount = 0 }: { projectId: number; ass
             const isExpanded = expandedScanId === scan.id;
             // Use live detail for expanded scan, fall back to list data
             const detail = isExpanded ? scanDetail : undefined;
-            const liveLogs = detail?.logs ?? (isExpanded ? scan.logs : null);
+            const liveLogs = detail?.logs ?? (isExpanded ? (scan as any).logs ?? null : null);
 
             return (
               <div
