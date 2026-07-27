@@ -78,7 +78,7 @@ export function Projects() {
             Project Targets
           </h1>
           <p className="text-[11px] font-mono text-muted-foreground mt-1 uppercase tracking-widest">
-            {projects?.length ?? 0} scopes indexed
+            {projectList.length} scopes indexed
           </p>
         </div>
         <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -131,7 +131,7 @@ export function Projects() {
         {/* Status Tabs */}
         <div className="flex items-center gap-2 overflow-x-auto pb-2 sm:pb-0">
           {["all", "active", "paused", "archived"].map(st => {
-            const count = st === "all" ? projects?.length : projects?.filter(p => p.status === st).length;
+            const count = st === "all" ? projectList.length : projectList.filter(p => p.status === st).length;
             const isActive = filter === st;
             return (
               <button 

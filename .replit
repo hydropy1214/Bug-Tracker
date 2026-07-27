@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "web", "bash"]
+modules = ["nodejs-20", "web", "bash", "postgresql-16"]
 
 [deployment]
 router = "application"
@@ -27,3 +27,5 @@ channel = "stable-25_05"
 [userenv.shared]
 NODE_ENV = "development"
 API_PORT = "8080"
+BASE_PATH = "/"
+PORT = "5173"
