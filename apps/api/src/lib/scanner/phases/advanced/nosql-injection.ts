@@ -18,7 +18,9 @@ export async function checkNoSqlInjection(target: Target, onLog: LogFn): Promise
     `${target.url.replace(/\/$/, '')}/signin`,
   ];
 
-  const successSignals = ['welcome', 'dashboard', 'logged in', 'token', 'access_token', 'session', '"user":', '"id":', '"role":', 'authenticated'];
+  // Tight success signals — broad terms like "token", '"id":', '"user":' appear in normal API responses
+  // and create false positives. Only flag on signals that unambiguously indicate authentication success.
+  const successSignals = ['logged in', 'access_token', '"role":', 'authenticated', 'welcome back', '"admin":', '"isAdmin":true'];
 
   for (const ep of authEndpoints) {
     // JSON operator injection
@@ -94,9 +96,10 @@ export async function checkNoSqlInjection(target: Target, onLog: LogFn): Promise
   for (const ep of collectionEndpoints) {
     for (const qs of urlOperators) {
       const r = await probe(`${ep}?${qs}`, { timeoutMs: 8_000 });
-      if (r && r.status === 200 && r.body.includes('[') && r.body.length > 100) {
+      if (r && r.status === 200 && r.body.includes('"') && r.body.length > 200) {
         const blR = await probe(ep, { timeoutMs: 8_000 });
-        if (blR && Math.abs(r.body.length - blR.body.length) > 50 && (blR.status !== 200 || blR.body.length < 10)) {
+        // Only flag when baseline returns non-200 or empty body, and injected response is substantially larger
+        if (blR && (blR.status !== 200 || blR.body.length < 10) && r.body.length > 200) {
           findings.push({
             title: 'NoSQL Injection — URL Parameter Operator Injection',
             severity: 'high',

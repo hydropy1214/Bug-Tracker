@@ -51,7 +51,11 @@ export async function checkSSRF(target: Target, onLog: LogFn): Promise<RealFindi
       const r = await probe(probeUrl, { timeoutMs: 8_000 });
       if (!r) continue;
       const body = r.body.toLowerCase();
-      const hasInternalContent = body.includes('ssh') || body.includes('mysql') || body.includes('redis') || body.includes('localhost') || (r.status === 200 && r.body.length > 100 && body.includes('<!doctype'));
+      // Only flag on specific internal-service keywords — generic HTML pages (<!doctype, 200 OK)
+      // are not SSRF evidence because the app may simply ignore unknown params and return its homepage.
+      const hasInternalContent = body.includes('ssh-') || body.includes('openssh') ||
+        body.includes('mysql') || body.includes('redis') ||
+        (body.includes('localhost') && !body.includes('localhost</') && !body.includes('localhost"'));
       if (hasInternalContent) {
         findings.push({
           title: `SSRF — Internal Service Response via '${param}' (Blind)`,

@@ -56,24 +56,27 @@ export async function checkSSTI(target: Target, onLog: LogFn): Promise<RealFindi
     }
   }
 
-  // POST body SSTI
+  // POST body SSTI — dual-math hardened (7*7=49 AND 7*8=56 must both evaluate)
   for (const { template, expected, engine } of mathProbes.slice(0, 3)) {
     const r = await probe(target.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: template, subject: template, body: template }), timeoutMs: 8_000 });
-    if (r && r.body.includes(expected) && !r.body.includes(template)) {
-      findings.push({
-        title: `Server-Side Template Injection (SSTI via POST) — ${engine}`,
-        severity: 'critical',
-        verification: 'suspected',
-        confidence: 70,
-        cvss: 10.0,
-        cve: null,
-        description: `POST body field evaluates template expression (${template} → ${expected}).`,
-        evidence: `POST ${target.url}\nBody: {"message": "${template}"}\nHTTP ${r.status} — result: ${expected} in response`,
-        remediation: 'Never render user-supplied content through a template engine.',
-      });
-      await onLog(`[${ts()}] ⚠ SSTI VIA POST BODY (${engine})`);
-      break;
-    }
+    if (!r || !r.body.includes(expected) || r.body.includes(template)) continue;
+    // Verify with second math expression to eliminate accidental numeric matches
+    const verify2 = template.replace('7*7', '7*8');
+    const r2 = await probe(target.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: verify2, subject: verify2, body: verify2 }), timeoutMs: 8_000 });
+    if (!r2 || !r2.body.includes('56') || r2.body.includes(verify2)) continue;
+    findings.push({
+      title: `Server-Side Template Injection (SSTI via POST) — ${engine}`,
+      severity: 'critical',
+      verification: 'verified',
+      confidence: 88,
+      cvss: 10.0,
+      cve: null,
+      description: `POST body field evaluates template expression (${template} → ${expected}). Confirmed with dual-math (7*8=56).`,
+      evidence: `POST ${target.url}\nBody: {"message": "${template}"}\nHTTP ${r.status} — ${expected} in response\nDual-math: ${verify2} → 56 confirmed`,
+      remediation: 'Never render user-supplied content through a template engine.',
+    });
+    await onLog(`[${ts()}] ⚠ SSTI VIA POST BODY CONFIRMED (dual-math, ${engine})`);
+    break;
   }
 
   return findings;

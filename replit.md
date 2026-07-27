@@ -23,8 +23,11 @@ The frontend proxies all `/api/*` requests to the API server via the Vite proxy 
 |-----|------|-------|
 | `SESSION_SECRET` | Secret ✓ | Already set — used to encrypt scan auth headers (AES-256-GCM) |
 | `DATABASE_URL` | Runtime-managed ✓ | Provisioned automatically — do not set manually |
-| `API_PORT` | Shared env | Port the API binds to; must match so the Vite proxy can reach it |
-| `NODE_ENV` | Shared env | Set to `development` (already configured) |
+| `API_PORT` | Shared env ✓ | Set to `8080` — port the API binds to; must match so the Vite proxy can reach it |
+| `BASE_PATH` | Shared env ✓ | Set to `/` — required by `apps/web/vite.config.ts`; missing this causes a black screen |
+| `NODE_ENV` | Shared env ✓ | Set to `development` |
+
+All shared env vars above are already configured in `.replit` under `[userenv.shared]`. They are applied automatically on startup — no manual action needed.
 
 ## First-time database setup
 
