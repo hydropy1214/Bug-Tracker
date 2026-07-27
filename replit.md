@@ -4,11 +4,13 @@
 
 SentinelX is a professional self-hosted web vulnerability scanner.
 It runs real system tools (nmap, dig, whois, openssl) and performs
-28 scanning phases: WAF bypass, subdomain takeover, blind SQLi,
+31 scanning phases: WAF bypass, subdomain takeover, blind SQLi,
 JWT cracking, Log4Shell, CRLF injection, path traversal, SSTI,
 XXE, SSRF, open registration exploitation, default credential
 brute-force, SQL injection auth bypass, enhanced command injection
-with file-read canary, and IDOR with captured session.
+with file-read canary, IDOR with captured session, API credential-leak
+checks, configuration exposure checks, and executable reflected-XSS
+verification.
 Every finding uses baseline comparison or canary tokens — no false positives.
 
 **Full documentation: see `README.md`**
@@ -25,6 +27,14 @@ packages/api-spec/     ← OpenAPI 3.1 spec
 packages/api-types/    ← Generated Zod schemas (from spec)
 packages/api-client/   ← Generated React Query hooks (from spec)
 ```
+
+### Scanner organization
+
+The compatibility facade in `apps/api/src/lib/scanner.ts` keeps the existing
+worker and route contracts stable. New or migrated checks live in focused
+modules under `apps/api/src/lib/scanner/phases/`, grouped by concern such as
+API leaks, configuration exposure, XSS, headers, API surface, and advanced
+probes. Add future checks there first so the orchestrator stays readable.
 
 ---
 

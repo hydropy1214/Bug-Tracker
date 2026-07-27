@@ -4336,6 +4336,48 @@ export async function scanTarget(
       await onLog(`[${ts()}] [Phase 13] API surface discovery...`);
       add(await runActiveChecks(() => checkApiSurface(target, onLog), []));
 
+      // Focused phase modules keep the growing scanner maintainable. They
+      // intentionally sit behind the legacy facade until each family has
+      // enough coverage to replace its compatibility implementation.
+      await onLog(`[${ts()}] [Phase 13b] API credential leak checks...`);
+      await safePhase('Phase 13b (API leaks)', async () => {
+        const { runApiLeaksPhase } = await import('./scanner/phases/api-leaks');
+        const phaseFindings: RealFinding[] = [];
+        await runApiLeaksPhase({
+          target,
+          policy,
+          log: onLog,
+          addFindings: (findings) => phaseFindings.push(...findings),
+        });
+        add(phaseFindings);
+      }, undefined as void);
+
+      await onLog(`[${ts()}] [Phase 13c] Configuration exposure checks...`);
+      await safePhase('Phase 13c (Configuration exposure)', async () => {
+        const { runConfigExposurePhase } = await import('./scanner/phases/config-exposure');
+        const phaseFindings: RealFinding[] = [];
+        await runConfigExposurePhase({
+          target,
+          policy,
+          log: onLog,
+          addFindings: (findings) => phaseFindings.push(...findings),
+        });
+        add(phaseFindings);
+      }, undefined as void);
+
+      await onLog(`[${ts()}] [Phase 13d] Focused XSS verification...`);
+      add(await runActiveChecks(async () => {
+        const { runXssPhase } = await import('./scanner/phases/xss');
+        const phaseFindings: RealFinding[] = [];
+        await runXssPhase({
+          target,
+          policy,
+          log: onLog,
+          addFindings: (findings) => phaseFindings.push(...findings),
+        });
+        return phaseFindings;
+      }, []));
+
       // Phase 14: Host header injection
       await onLog(`[${ts()}] [Phase 14] Host header injection...`);
       add(await runActiveChecks(() => checkHostHeaderInjection(target, onLog), []));
