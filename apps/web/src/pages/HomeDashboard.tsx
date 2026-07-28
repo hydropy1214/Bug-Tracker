@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'wouter';
 import {
   Shield,
@@ -265,7 +265,7 @@ export function HomeDashboard() {
   const { data: severityBreakdown } = useGetSeverityBreakdown();
 
   // Fetch recent critical/high findings
-  const [recentFindings, setRecentFindings] = React.useState<RecentFinding[]>([]);
+  const [recentFindings, setRecentFindings] = useState<RecentFinding[]>([]);
   useEffect(() => {
     fetch('/api/dashboard/recent-findings?severity=critical,high&limit=8', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : []))
@@ -274,7 +274,7 @@ export function HomeDashboard() {
   }, []);
 
   const activity = Array.isArray(activityRaw) ? activityRaw : [];
-  const breakdown = (severityBreakdown as Record<string, number>) ?? {};
+  const breakdown = (severityBreakdown as unknown as Record<string, number>) ?? {};
   const totalOpen = Object.values(breakdown).reduce((s, n) => s + n, 0);
 
   const criticalCount = (stats as any)?.criticalFindings ?? 0;

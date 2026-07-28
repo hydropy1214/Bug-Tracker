@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, sql, and } from "drizzle-orm";
+import { eq, sql, and, inArray } from "drizzle-orm";
 import {
   db,
   projectsTable,
@@ -150,7 +150,7 @@ router.get("/dashboard/recent-findings", async (req, res): Promise<void> => {
     .leftJoin(projectsTable, eq(findingsTable.projectId, projectsTable.id))
     .where(
       severityFilter.length > 0
-        ? sql`${findingsTable.status} = 'open' AND ${findingsTable.severity} = ANY(${severityFilter}::text[])`
+        ? and(eq(findingsTable.status, "open"), inArray(findingsTable.severity, severityFilter))
         : eq(findingsTable.status, "open"),
     )
     .orderBy(
