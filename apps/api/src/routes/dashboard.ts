@@ -124,4 +124,49 @@ router.get("/dashboard/severity-breakdown", async (_req, res): Promise<void> => 
   res.json(breakdown);
 });
 
+// GET /dashboard/recent-findings?severity=critical,high&limit=N
+// Returns the most recent open findings, optionally filtered by severity.
+router.get("/dashboard/recent-findings", async (req, res): Promise<void> => {
+  const rawSeverity = req.query.severity as string | undefined;
+  const rawLimit = req.query.limit as string | undefined;
+  const limit = Math.min(parseInt(rawLimit ?? "20", 10) || 20, 50);
+
+  const allowedSeverities = ["critical", "high", "medium", "low", "info"];
+  const severityFilter = rawSeverity
+    ? rawSeverity.split(",").map((s) => s.trim().toLowerCase()).filter((s) => allowedSeverities.includes(s))
+    : [];
+
+  const baseQuery = db
+    .select({
+      id: findingsTable.id,
+      title: findingsTable.title,
+      severity: findingsTable.severity,
+      cvss: findingsTable.cvss,
+      affectedEndpoint: findingsTable.affectedEndpoint,
+      createdAt: findingsTable.createdAt,
+      projectName: projectsTable.name,
+    })
+    .from(findingsTable)
+    .leftJoin(projectsTable, eq(findingsTable.projectId, projectsTable.id))
+    .where(
+      severityFilter.length > 0
+        ? sql`${findingsTable.status} = 'open' AND ${findingsTable.severity} = ANY(${severityFilter}::text[])`
+        : eq(findingsTable.status, "open"),
+    )
+    .orderBy(
+      sql`CASE ${findingsTable.severity}
+        WHEN 'critical' THEN 1
+        WHEN 'high' THEN 2
+        WHEN 'medium' THEN 3
+        WHEN 'low' THEN 4
+        ELSE 5
+      END`,
+      sql`${findingsTable.createdAt} DESC`,
+    )
+    .limit(limit);
+
+  const rows = await baseQuery;
+  res.json(rows);
+});
+
 export default router;

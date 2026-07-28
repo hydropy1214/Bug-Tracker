@@ -6,6 +6,7 @@ import findingsRouter from "./findings";
 import scansRouter from "./scans";
 import dashboardRouter from "./dashboard";
 import quickScanRouter from "./quick-scan";
+import settingsRouter from "./settings";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(assetsRouter);
 router.use(findingsRouter);
 router.use(scansRouter);
 router.use(dashboardRouter);
+router.use(settingsRouter);
 
 export default router;
