@@ -53,6 +53,12 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use("/api", router);
 
+// ── Root health probe — Replit's health checker hits GET / on every service.
+// Return 200 so it doesn't show "Cannot GET /" in the preview pane.
+app.get("/", (_req, res) => {
+  res.json({ service: "SentinelX API", status: "ok", docs: "/api/healthz" });
+});
+
 // ── Global error handler — must be last (4-arg signature) ─────────────────────
 // Express 5 forwards async route errors here automatically.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
