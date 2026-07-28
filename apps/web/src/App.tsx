@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
-import NotFound from '@/pages/not-found';
 import { Route, Switch, Router as WouterRouter, Redirect } from 'wouter';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Shell } from '@/components/layout/Shell';
 import { HomeDashboard } from '@/pages/HomeDashboard';
 import { ScanEngine } from '@/pages/ScanEngine';
@@ -54,8 +54,8 @@ function Router() {
           <Redirect to="/" />
         </Route>
 
-        {/* 404 */}
-        <Route component={NotFound} />
+        {/* Any unknown path → back to dashboard */}
+        <Route><Redirect to="/" /></Route>
       </Switch>
     </Shell>
   );
@@ -63,12 +63,14 @@ function Router() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-        <Router />
-      </WouterRouter>
-      <Toaster theme="dark" position="bottom-right" richColors />
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+          <Router />
+        </WouterRouter>
+        <Toaster theme="dark" position="bottom-right" richColors />
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 
