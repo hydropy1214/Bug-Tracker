@@ -1,0 +1,17 @@
+{
+  "name": "SentinelX",
+  "short_name": "SentinelX",
+  "description": "Full-stack web security reconnaissance and vulnerability scanning platform.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090a10",
+  "theme_color": "#00ff80",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

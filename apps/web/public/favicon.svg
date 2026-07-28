@@ -1,3 +1,25 @@
 <svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="180" height="180" rx="36" fill="#FF3C00"/>
+  <!-- Dark rounded background -->
+  <rect width="180" height="180" rx="36" fill="#090a10"/>
+
+  <!-- Shield body (filled subtle) -->
+  <path d="M90 22L40 50v44c0 32 26 59 50 64 24-5 50-32 50-64V50L90 22z"
+        fill="rgba(0,255,128,0.06)"/>
+
+  <!-- Shield outline with glow -->
+  <path d="M90 22L40 50v44c0 32 26 59 50 64 24-5 50-32 50-64V50L90 22z"
+        stroke="#00ff80" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"
+        fill="none"/>
+
+  <!-- Inner shield highlight line -->
+  <path d="M90 35L53 57v35c0 24 19 44 37 49 18-5 37-25 37-49V57L90 35z"
+        stroke="rgba(0,255,128,0.18)" stroke-width="1.5" stroke-linejoin="round"
+        fill="none"/>
+
+  <!-- X mark — bold, centered -->
+  <line x1="68" y1="76" x2="112" y2="110" stroke="#00ff80" stroke-width="9" stroke-linecap="round"/>
+  <line x1="112" y1="76" x2="68"  y2="110" stroke="#00ff80" stroke-width="9" stroke-linecap="round"/>
+
+  <!-- Corner accent dots -->
+  <circle cx="90" cy="22" r="3" fill="#00ff80"/>
 </svg>

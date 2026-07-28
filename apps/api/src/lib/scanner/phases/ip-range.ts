@@ -203,7 +203,7 @@ export async function checkIpRange(
   if (sweepRange) {
     const range = sweepRange;
     if (range && range.count <= 256) {
-      await onLog(`[${ts()}] Reverse DNS sweep on ${Math.min(range.count, 30)} adjacent IPs in ${cidr}...`);
+      await onLog(`[${ts()}] Reverse DNS sweep on ${Math.min(range.count, 30)} adjacent IPs in ${rangeStr}...`);
       const toSweep = Math.min(range.count, 30);
       const baseInt = range.start;
 
@@ -239,12 +239,12 @@ export async function checkIpRange(
           verification: 'verified',
           confidence: 90,
           description:
-            `Reverse DNS sweep of ${cidr} found ${reverseHits.length} host(s) sharing the same IP range. ` +
+            `Reverse DNS sweep of ${rangeStr} found ${reverseHits.length} host(s) sharing the same IP range. ` +
             (sameOrg.length > 0
               ? `${sameOrg.length} appear to belong to the same organization.`
               : 'These may be co-hosted on a shared server.'),
           evidence:
-            `IP range: ${cidr}\nCo-hosted hosts (${reverseHits.length}):\n` +
+            `IP range: ${rangeStr}\nCo-hosted hosts (${reverseHits.length}):\n` +
             reverseHits.slice(0, 20).map((h) => `  ${h.ip} → ${h.hostname}`).join('\n'),
           remediation:
             'Ensure co-hosted applications are properly isolated. ' +

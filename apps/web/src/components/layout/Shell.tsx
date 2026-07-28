@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import {
-  ShieldAlert,
   LayoutDashboard,
   ListChecks,
   Settings,
@@ -118,8 +117,17 @@ export function Shell({ children }: { children: React.ReactNode }) {
         {/* Logo */}
         <div className="h-16 flex items-center px-4 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-3 overflow-hidden w-full">
-            <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center border border-primary/20 flex-shrink-0 glow-primary">
-              <ShieldAlert className="w-4 h-4 text-primary" />
+            {/* Brand shield icon — matches favicon */}
+            <div className="w-8 h-8 flex-shrink-0 glow-primary">
+              <svg viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+                <rect width="180" height="180" rx="36" fill="hsl(240 10% 6%)"/>
+                <path d="M90 22L40 50v44c0 32 26 59 50 64 24-5 50-32 50-64V50L90 22z"
+                      fill="hsl(150 100% 50% / 0.06)"/>
+                <path d="M90 22L40 50v44c0 32 26 59 50 64 24-5 50-32 50-64V50L90 22z"
+                      stroke="hsl(150 100% 50%)" strokeWidth="5" strokeLinejoin="round" strokeLinecap="round"/>
+                <line x1="68" y1="76" x2="112" y2="110" stroke="hsl(150 100% 50%)" strokeWidth="9" strokeLinecap="round"/>
+                <line x1="112" y1="76" x2="68"  y2="110" stroke="hsl(150 100% 50%)" strokeWidth="9" strokeLinecap="round"/>
+              </svg>
             </div>
             {!collapsed && (
               <div className="whitespace-nowrap transition-opacity duration-300">

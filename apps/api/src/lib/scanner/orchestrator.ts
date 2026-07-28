@@ -217,8 +217,6 @@ export async function scanTarget(
         r2CloudBuckets,
         r2Emails,
         r2Leaks,
-        r2Nuclei,
-        r2JsSecrets,
       ] = await Promise.allSettled([
         // Phase 2: DNS
         safeRun('Phase 2 (DNS)', () => checkDns(target.hostname, onLog), [], onLog),
