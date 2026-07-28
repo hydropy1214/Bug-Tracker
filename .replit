@@ -13,8 +13,7 @@ runButton = "Project"
 
 # Project workflow — sequential so setup runs first, then web before API.
 # Starting the web service (Vite on 5173) BEFORE the API ensures Replit's
-# preview proxy registers port 5173 as the root service. If the API started
-# first it could race for the root slot and show raw JSON in the preview.
+# preview proxy registers port 5173 as the root service.
 [[workflows.workflow]]
 name = "Project"
 mode = "sequential"
@@ -38,7 +37,8 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "PORT=8080 pnpm --filter @workspace/api run dev"
+args = "pnpm --filter @workspace/api run dev"
+waitForPort = 8080
 
 [[workflows.workflow]]
 name = "apps/web: web"
@@ -47,6 +47,7 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/web run dev"
+waitForPort = 5173
 
 [agent]
 stack = "PNPM_WORKSPACE"
