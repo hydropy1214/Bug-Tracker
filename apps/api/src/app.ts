@@ -53,10 +53,11 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use("/api", router);
 
-// ── Root probe — return JSON so any stray GET / never causes a redirect loop.
-// The web app lives at "/" served by Vite on its own port; the API only owns "/api".
+// ── Root probe — the API lives entirely under /api; anything hitting / is a
+// stray request (e.g. from the artifact-router health prober).  Return 404 so
+// the Replit proxy never confuses the API's root with the web-app dashboard.
 app.get("/", (_req, res) => {
-  res.status(200).json({ service: "sentinelx-api", health: "/api/healthz" });
+  res.status(404).json({ error: "Not found — API lives at /api" });
 });
 
 // ── Global error handler — must be last (4-arg signature) ─────────────────────
