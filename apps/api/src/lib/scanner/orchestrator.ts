@@ -67,6 +67,17 @@ import {
   checkIdorWithCapturedSession,
 } from './phases/verification/active';
 
+// ── New high-power phases ─────────────────────────────────────────────────────
+import { runNucleiScan } from './phases/nuclei';
+import { checkJsSecrets } from './phases/js-secrets';
+import { checkCorsMisconfiguration } from './phases/cors-bypass';
+import { checkGraphQLDeep } from './phases/graphql-deep';
+import { checkSqliAdvanced } from './phases/sqli-advanced';
+import { checkPrototypePollution } from './phases/prototype-pollution';
+import { checkOAuthMisconfig } from './phases/oauth-misconfig';
+import { discoverVhosts } from './phases/vhost-discovery';
+import { runFfufDiscovery } from './phases/ffuf-discovery';
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 /** Run a phase, swallow errors, and return `fallback` on failure. */
@@ -148,7 +159,7 @@ export async function scanTarget(
           ? `[${ts()}] AUTH    : Authenticated scanning enabled (${Object.keys(authHeaders).join(', ')})`
           : `[${ts()}] AUTH    : Unauthenticated scan`,
       );
-      await onLog(`[${ts()}] PIPELINE: 5-round parallel pipeline`);
+      await onLog(`[${ts()}] PIPELINE: 5-round parallel pipeline (nuclei · ffuf · subfinder · sqli-time · GraphQL · PP · OAuth · vhost · JS-secrets)`);
       await onLog(`[${ts()}] ═══════════════════════════════════════`);
 
       // ════════════════════════════════════════════════════════════════════════
@@ -185,6 +196,8 @@ export async function scanTarget(
       await onLog(`[${ts()}] [Phase 11e] Cloud bucket enumeration`);
       await onLog(`[${ts()}] [Phase 11f] Email harvesting & SPF/DMARC`);
       await onLog(`[${ts()}] [Phase 11g] Leak detection`);
+      await onLog(`[${ts()}] [Phase N1]  Nuclei — CVE/misconfig/exposure/default-login/panel`);
+      await onLog(`[${ts()}] [Phase N2]  JavaScript secret extraction & endpoint discovery`);
 
       const r2Start = Date.now();
       const [
@@ -204,6 +217,8 @@ export async function scanTarget(
         r2CloudBuckets,
         r2Emails,
         r2Leaks,
+        r2Nuclei,
+        r2JsSecrets,
       ] = await Promise.allSettled([
         // Phase 2: DNS
         safeRun('Phase 2 (DNS)', () => checkDns(target.hostname, onLog), [], onLog),

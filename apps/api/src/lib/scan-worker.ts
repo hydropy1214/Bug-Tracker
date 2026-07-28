@@ -402,6 +402,12 @@ async function recoverInterruptedScans(): Promise<void> {
 
 export function startScanWorker(): void {
   logger.info("Scan worker started (real HTTP scanner active)");
+
+  // Pre-warm nuclei templates in the background so the first scan doesn't wait
+  void import("./scanner/phases/nuclei").then(({ ensureNucleiTemplates }) => {
+    ensureNucleiTemplates((msg) => logger.info({ msg }, "nuclei-setup")).catch(() => {});
+  }).catch(() => {});
+
   let ready = false;
   void recoverInterruptedScans()
     .then(() => {

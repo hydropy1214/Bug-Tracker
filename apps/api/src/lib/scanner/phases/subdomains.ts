@@ -2,6 +2,64 @@ import { execFileAsync, digQuery, dnsResolve, ts } from '../context';
 import { probe } from '../utils/http';
 import type { RealFinding, LogFn } from '../context';
 
+// ─── subfinder integration ────────────────────────────────────────────────────
+
+async function runSubfinder(rootDomain: string, onLog: LogFn): Promise<string[]> {
+  try {
+    await execFileAsync('which', ['subfinder'], { timeout: 2_000 });
+  } catch {
+    return [];
+  }
+  await onLog(`[${ts()}] [subfinder] Passive subdomain enumeration for ${rootDomain}...`);
+  try {
+    const { stdout } = await execFileAsync(
+      'subfinder',
+      ['-d', rootDomain, '-silent', '-t', '50', '-timeout', '30', '-all'],
+      { timeout: 90_000 },
+    );
+    const subs = stdout
+      .trim()
+      .split('\n')
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.endsWith(`.${rootDomain}`) || s === rootDomain);
+    await onLog(`[${ts()}] [subfinder] Found ${subs.length} subdomain(s) via passive enumeration`);
+    return subs;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await onLog(`[${ts()}] [subfinder] Error: ${msg}`);
+    return [];
+  }
+}
+
+// ─── Additional CT sources ────────────────────────────────────────────────────
+
+async function queryCertSpotter(rootDomain: string): Promise<string[]> {
+  try {
+    const r = await probe(`https://api.certspotter.com/v1/issuances?domain=${rootDomain}&include_subdomains=true&expand=dns_names`, { timeoutMs: 15_000 });
+    if (!r || r.status !== 200) return [];
+    const records: Array<{ dns_names: string[] }> = JSON.parse(r.body);
+    const names = new Set<string>();
+    for (const rec of records) {
+      for (const name of rec.dns_names ?? []) {
+        const n = name.trim().toLowerCase().replace(/^\*\./, '');
+        if (n.endsWith(`.${rootDomain}`) || n === rootDomain) names.add(n);
+      }
+    }
+    return [...names];
+  } catch { return []; }
+}
+
+async function queryHackerTarget(rootDomain: string): Promise<string[]> {
+  try {
+    const r = await probe(`https://api.hackertarget.com/hostsearch/?q=${rootDomain}`, { timeoutMs: 10_000 });
+    if (!r || r.status !== 200) return [];
+    return r.body
+      .split('\n')
+      .map((line) => line.split(',')[0]?.trim().toLowerCase() ?? '')
+      .filter((s) => s.endsWith(`.${rootDomain}`));
+  } catch { return []; }
+}
+
 export async function discoverSubdomains(
   hostname: string,
   onLog: LogFn,
@@ -10,10 +68,14 @@ export async function discoverSubdomains(
   const subs: string[] = [];
   const parts = hostname.split('.');
   const rootDomain = parts.length > 2 ? parts.slice(-2).join('.') : hostname;
-  await onLog(`[${ts()}] Querying crt.sh certificate transparency for ${rootDomain} subdomains...`);
-  try {
-    const r = await probe(`https://crt.sh/?q=%.${rootDomain}&output=json`, { timeoutMs: 20_000 });
-    if (r && r.status === 200 && r.body.startsWith('[')) {
+
+  // ── Run subfinder, crt.sh, certspotter, hackertarget in parallel ──────────
+  await onLog(`[${ts()}] Subdomain enumeration: crt.sh + certspotter + hackertarget + subfinder + DNS brute-force...`);
+  const [crtshResult, certspotterResult, hackerTargetResult, subfinderResult] = await Promise.allSettled([
+    // crt.sh
+    (async () => {
+      const r = await probe(`https://crt.sh/?q=%.${rootDomain}&output=json`, { timeoutMs: 20_000 });
+      if (!r || r.status !== 200 || !r.body.startsWith('[')) return [] as string[];
       const records: Array<{ name_value: string }> = JSON.parse(r.body);
       const nameSet = new Set<string>();
       for (const rec of records) {
@@ -22,37 +84,21 @@ export async function discoverSubdomains(
           if (n.endsWith(`.${rootDomain}`) || n === rootDomain) nameSet.add(n);
         }
       }
-      const uniqueSubs = [...nameSet].filter((n) => n !== rootDomain);
-      subs.push(...uniqueSubs.slice(0, 50));
-      const interesting = uniqueSubs.filter((s) =>
-        /admin|dev|staging|test|internal|api|vpn|uat|qa|demo|beta|old|legacy/i.test(s),
-      );
-      if (interesting.length > 0) {
-        findings.push({
-          title: `${interesting.length} Sensitive Subdomain(s) via Certificate Transparency`,
-          severity: 'medium',
-          cvss: 5.3,
-          cve: null,
-          description: `crt.sh reveals ${interesting.length} potentially internal subdomains.`,
-          evidence: `Sensitive subdomains:\n${interesting.slice(0, 15).join('\n')}`,
-          remediation: 'Audit each subdomain.',
-        });
-      }
-      if (uniqueSubs.length > 20) {
-        findings.push({
-          title: `Large Attack Surface: ${uniqueSubs.length} Subdomains`,
-          severity: 'low',
-          cvss: 3.7,
-          cve: null,
-          description: `${uniqueSubs.length} subdomains discovered.`,
-          evidence: `Sample: ${uniqueSubs.slice(0, 10).join(', ')}`,
-          remediation: 'Regularly audit subdomains.',
-        });
-      }
-    }
-  } catch (err: any) {
-    await onLog(`[${ts()}] crt.sh lookup error: ${err?.message ?? String(err)}`);
+      return [...nameSet];
+    })(),
+    queryCertSpotter(rootDomain),
+    queryHackerTarget(rootDomain),
+    runSubfinder(rootDomain, onLog),
+  ]);
+
+  // Merge all CT/passive results
+  const allPassive = new Set<string>();
+  for (const r of [crtshResult, certspotterResult, hackerTargetResult, subfinderResult]) {
+    if (r.status === 'fulfilled') for (const s of r.value) allPassive.add(s);
   }
+  const uniquePassive = [...allPassive].filter((n) => n !== rootDomain);
+  subs.push(...uniquePassive.slice(0, 200));
+  await onLog(`[${ts()}] Passive enumeration: ${uniquePassive.length} unique subdomain(s) found`);
 
   const COMMON_SUBS = [
     // Core services
@@ -146,6 +192,22 @@ const TAKEOVER_FINGERPRINTS: Array<{ service: string; cnamePattern: RegExp; indi
   { service: 'AWS CloudFront', cnamePattern: /cloudfront\.net$/i, indicator: 'the request could not be satisfied' },
   { service: 'Azure Web Apps', cnamePattern: /azurewebsites\.net$/i, indicator: '404 web site not found' },
   { service: 'Netlify', cnamePattern: /netlify\.app$/i, indicator: 'not found - request id' },
+  { service: 'Fastly', cnamePattern: /fastly\.net$/i, indicator: 'fastly error: unknown domain' },
+  { service: 'Pantheon', cnamePattern: /pantheonsite\.io$/i, indicator: "404 error unknown site" },
+  { service: 'Shopify', cnamePattern: /myshopify\.com$/i, indicator: 'sorry, this shop is currently unavailable' },
+  { service: 'Ghost', cnamePattern: /ghost\.io$/i, indicator: 'used ghost? not found' },
+  { service: 'Surge.sh', cnamePattern: /surge\.sh$/i, indicator: "project not found" },
+  { service: 'ReadMe', cnamePattern: /readme\.io$/i, indicator: 'project doesnt exist' },
+  { service: 'HubSpot', cnamePattern: /hubspot\.net$/i, indicator: 'domain not found' },
+  { service: 'Zendesk', cnamePattern: /zendesk\.com$/i, indicator: "help center closed" },
+  { service: 'Tumblr', cnamePattern: /tumblr\.com$/i, indicator: "there's nothing here" },
+  { service: 'WordPress.com', cnamePattern: /wordpress\.com$/i, indicator: 'do you want to register' },
+  { service: 'Squarespace', cnamePattern: /squarespace\.com$/i, indicator: "no such account" },
+  { service: 'Campaign Monitor', cnamePattern: /createsend\.com$/i, indicator: 'double check the url' },
+  { service: 'Cargo', cnamePattern: /cargocollective\.com$/i, indicator: '404 not found' },
+  { service: 'Bitbucket', cnamePattern: /bitbucket\.io$/i, indicator: 'repository not found' },
+  { service: 'UserVoice', cnamePattern: /uservoice\.com$/i, indicator: 'this uservoice subdomain' },
+  { service: 'GetResponse', cnamePattern: /gr8\.com$/i, indicator: 'with getresponse' },
 ];
 
 export async function checkSubdomainTakeover(

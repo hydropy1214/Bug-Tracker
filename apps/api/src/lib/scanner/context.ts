@@ -166,10 +166,13 @@ const TOOL_COMMANDS: Record<string, string> = {
   whois: 'whois',
   openssl: 'openssl',
   curl: 'curl',
-  httpx: 'httpx',
   nuclei: 'nuclei',
   ffuf: 'ffuf',
+  subfinder: 'subfinder',
   sqlmap: 'sqlmap',
+  gobuster: 'gobuster',
+  gitleaks: 'gitleaks',
+  git: 'git',
 };
 
 export async function discoverToolCapabilities(): Promise<ToolCapability[]> {
