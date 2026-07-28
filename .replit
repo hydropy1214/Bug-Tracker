@@ -11,9 +11,6 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
-# Project workflow — setup first, then kick off both artifact-managed services.
-# The sub-workflow names match the artifact-managed workflow names so Replit's
-# routing injection fires: web service owns "/" (port 5173), API owns "/api" (port 8080).
 [[workflows.workflow]]
 name = "Project"
 mode = "sequential"
@@ -30,6 +27,26 @@ args = "apps/web: web"
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "apps/api: API Server"
+
+# Web service — waitForPort tells Replit's proxy that port 5173 owns "/"
+# This is the ONLY waitForPort in the config so the proxy routes the preview here.
+[[workflows.workflow]]
+name = "apps/web: web"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/web run dev"
+waitForPort = 5173
+
+# API service — no waitForPort so it never competes for the preview routing slot
+[[workflows.workflow]]
+name = "apps/api: API Server"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api run dev"
 
 [agent]
 stack = "PNPM_WORKSPACE"
