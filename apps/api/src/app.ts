@@ -54,9 +54,19 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use("/api", router);
 
 // ── Root health probe — Replit's health checker hits GET / on every service.
-// Return 200 so it doesn't show "Cannot GET /" in the preview pane.
+// Serve an HTML redirect so the browser is always sent to the web app;
+// returning raw JSON here caused the Replit preview to show API output
+// instead of the dashboard whenever the proxy landed on this port.
 app.get("/", (_req, res) => {
-  res.json({ service: "SentinelX API", status: "ok", docs: "/api/healthz" });
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.status(200).send(
+    '<!DOCTYPE html><html><head>' +
+    '<meta http-equiv="refresh" content="0; url=/">' +
+    '<title>SentinelX API</title></head><body>' +
+    '<p>SentinelX API is running. ' +
+    '<a href="/api/healthz">Health check</a></p>' +
+    '</body></html>'
+  );
 });
 
 // ── Global error handler — must be last (4-arg signature) ─────────────────────

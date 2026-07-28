@@ -11,9 +11,10 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
-# Project workflow — sequential so setup always runs before services.
-# On a fresh GitHub import node_modules is missing; setup.sh installs
-# deps and pushes the DB schema before either server tries to start.
+# Project workflow — sequential so setup runs first, then web before API.
+# Starting the web service (Vite on 5173) BEFORE the API ensures Replit's
+# preview proxy registers port 5173 as the root service. If the API started
+# first it could race for the root slot and show raw JSON in the preview.
 [[workflows.workflow]]
 name = "Project"
 mode = "sequential"
@@ -25,11 +26,11 @@ args = "bash scripts/setup.sh"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "apps/api: API Server"
+args = "apps/web: web"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "apps/web: web"
+args = "apps/api: API Server"
 
 [[workflows.workflow]]
 name = "apps/api: API Server"
