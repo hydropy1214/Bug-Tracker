@@ -53,20 +53,10 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use("/api", router);
 
-// ── Root health probe — Replit's health checker hits GET / on every service.
-// Serve an HTML redirect so the browser is always sent to the web app;
-// returning raw JSON here caused the Replit preview to show API output
-// instead of the dashboard whenever the proxy landed on this port.
+// ── Root probe — return JSON so any stray GET / never causes a redirect loop.
+// The web app lives at "/" served by Vite on its own port; the API only owns "/api".
 app.get("/", (_req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.status(200).send(
-    '<!DOCTYPE html><html><head>' +
-    '<meta http-equiv="refresh" content="0; url=/">' +
-    '<title>SentinelX API</title></head><body>' +
-    '<p>SentinelX API is running. ' +
-    '<a href="/api/healthz">Health check</a></p>' +
-    '</body></html>'
-  );
+  res.status(200).json({ service: "sentinelx-api", health: "/api/healthz" });
 });
 
 // ── Global error handler — must be last (4-arg signature) ─────────────────────

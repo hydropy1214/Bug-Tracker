@@ -1,20 +1,29 @@
 ---
 name: SentinelX Replit preview
-description: Why localhost:80 is always refused, how the preview actually works, and how to verify the app is healthy.
+description: Root cause of the routing bug, the permanent fix, and how to verify the app is healthy.
 ---
 
-The SentinelX project uses `apps/api` and `apps/web` (non-standard — artifacts/ dir doesn't exist). Replit's shared proxy at `localhost:80` is **external infrastructure that only starts for artifacts in `artifacts/`**. Since the layout is `apps/`, `curl localhost:80` always returns connection refused from within the container — this is expected and permanent.
+## Root cause (confirmed 2026-07-28)
 
-**The preview IS working for the user** despite localhost:80 being unreachable from the shell. Verify health this way:
-- `curl localhost:5173/` → returns HTML (Vite web app running on 0.0.0.0)
-- `curl localhost:8080/api/healthz` → returns `{"status":"ok"}`
-- Browser console logs showing `[vite] connected` confirm the user's preview is live
-- `/proc/net/tcp` hex port 0x1435=5173 and 0x1F90=8080 should both show state 0A (LISTEN) on 0.0.0.0
+The project uses `apps/api` and `apps/web` (non-standard layout — no `artifacts/` dir).  
+When `.replit` has **manual** `[[workflows.workflow]]` entries with the same names as artifact-managed workflows (`apps/web: web`, `apps/api: API Server`), the manual entries **override** the artifact-managed ones.  
+Artifact-managed workflows inject proxy routing metadata (which path each port owns). Manual ones do not.  
+Without that injection the Replit proxy routes **all** traffic to whichever port opens first — typically 8080 (the API, which builds and starts faster than Vite). The user sees the API server instead of the React dashboard.
 
-**Screenshot tool always fails** (`ERR_CONNECTION_REFUSED at http://127.0.0.1:80/`) — this is a tooling limitation of the non-standard layout, not an application failure.
+## Permanent fix applied
 
-**Why:** The screenshot tool and the pnpm-workspace skill's "use localhost:80" guidance both assume artifacts live in `artifacts/`. The proxy that would listen at port 80 inside the container is not started because no `artifacts/` directory exists.
+1. **Removed** the manual `apps/web: web` and `apps/api: API Server` workflow definitions from `.replit`. Only the `Project` orchestrator workflow remains; it calls `workflow.run` to trigger the artifact-managed sub-workflows (same names, now owned by the artifact system).
+2. **Fixed** the API's `GET /` handler — it was returning `<meta http-equiv="refresh" content="0; url=/">`, causing an infinite redirect loop whenever the proxy accidentally routed root to port 8080. Changed to `res.json({ service: "sentinelx-api", health: "/api/healthz" })`.
 
-**How to apply:** When asked to verify the app visually or take screenshots, confirm ports are listening via /proc/net/tcp and check browser console logs instead of attempting screenshots. Report to the user that the preview works in their browser but screenshots via the tool are unavailable for this layout.
+**Rule: NEVER add manual `[[workflows.workflow]]` definitions for `apps/web: web` or `apps/api: API Server` to `.replit`. The artifact system owns those workflow names.**
 
-**Workflows:** Both `apps/web: web` (waitForPort=5173) and `apps/api: API Server` (waitForPort=8080) are in `.replit`. The `waitForPort` fields were added to both workflow tasks so Replit's runtime can signal readiness correctly.
+## How to verify the app is healthy
+
+1. `curl -s "https://$REPLIT_DEV_DOMAIN/"` → should return Vite HTML (`<!DOCTYPE html>` …)
+2. `curl -s "https://$REPLIT_DEV_DOMAIN/api/healthz"` → `{"status":"ok"}`
+3. API logs should show `/api/dashboard/*` and `/api/scans` requests (from browser) — **not** a flood of `GET /`
+4. Browser console: `[vite] connected`
+
+## Screenshot tool note
+
+`localhost:80` is always connection-refused from within the container (proxy is external infrastructure). The screenshot tool always fails for this layout. Verify health via curl + API logs instead.

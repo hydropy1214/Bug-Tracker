@@ -11,9 +11,9 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
-# Project workflow — sequential so setup runs first, then web before API.
-# Starting the web service (Vite on 5173) BEFORE the API ensures Replit's
-# preview proxy registers port 5173 as the root service.
+# Project workflow — setup first, then kick off both artifact-managed services.
+# The sub-workflow names match the artifact-managed workflow names so Replit's
+# routing injection fires: web service owns "/" (port 5173), API owns "/api" (port 8080).
 [[workflows.workflow]]
 name = "Project"
 mode = "sequential"
@@ -30,24 +30,6 @@ args = "apps/web: web"
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "apps/api: API Server"
-
-[[workflows.workflow]]
-name = "apps/api: API Server"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/api run dev"
-waitForPort = 8080
-
-[[workflows.workflow]]
-name = "apps/web: web"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/web run dev"
-waitForPort = 5173
 
 [agent]
 stack = "PNPM_WORKSPACE"
