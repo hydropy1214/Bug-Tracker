@@ -1,8 +1,12 @@
 /**
  * Scan orchestrator — wires all phase modules together into scanTarget().
  *
- * Every import comes from scanner/context or scanner/phases/*.
- * Nothing in this file imports from the legacy scanner.ts.
+ * Pipeline design (4 parallel rounds):
+ *   Round 1  — WAF/CDN detection (solo; sets shared WAF context before any active probe)
+ *   Round 2  — All passive recon + OSINT in parallel (DNS, ports, TLS, subdomains, Wayback, dorking…)
+ *   Round 3  — All active web probes + attack-surface crawl in parallel
+ *   Round 4  — All deep-attack phases in parallel (uses surface from R3, techs from R2)
+ *   Round 5  — Weaponised verification (only when policy.allowVerification)
  */
 
 import {
@@ -63,6 +67,31 @@ import {
   checkIdorWithCapturedSession,
 } from './phases/verification/active';
 
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+/** Run a phase, swallow errors, and return `fallback` on failure. */
+async function safeRun<T>(label: string, fn: () => Promise<T>, fallback: T, onLog: LogFn): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await onLog(`[${ts()}] [WARNING] ${label} error (skipped): ${msg}`);
+    return fallback;
+  }
+}
+
+/** Like safeRun but wraps with runActiveChecks (skipped when WAF blocks). */
+async function activeRun<T>(label: string, fn: () => Promise<T>, fallback: T, onLog: LogFn): Promise<T> {
+  return safeRun(label, () => runActiveChecks(fn, fallback), fallback, onLog);
+}
+
+/** Resolve a settled Promise.allSettled result to its value or the fallback. */
+function settled<T>(result: PromiseSettledResult<T>, fallback: T): T {
+  return result.status === 'fulfilled' ? result.value : fallback;
+}
+
+// ─── entry point ─────────────────────────────────────────────────────────────
+
 export async function scanTarget(
   value: string,
   assetType: string,
@@ -77,7 +106,6 @@ export async function scanTarget(
     return { findings: [], wafBlocked: false };
   }
 
-  // Apply origin override if set
   if (policy.originOverride) {
     const origHost = target.hostname;
     target.hostname = policy.originOverride;
@@ -105,314 +133,436 @@ export async function scanTarget(
       const all: RealFinding[] = [];
       const add = (f: RealFinding[]) => { all.push(...f); };
 
-      const safePhase = async <T>(label: string, fn: () => Promise<T>, fallback: T): Promise<T> => {
-        try {
-          return await fn();
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          await onLog(`[${ts()}] [WARNING] ${label} encountered an error and was skipped: ${msg}`);
-          return fallback;
-        }
-      };
-
       await onLog(`[${ts()}] ═══════════════════════════════════════`);
       await onLog(`[${ts()}] TARGET  : ${target.url}`);
       await onLog(`[${ts()}] HOST    : ${target.hostname}`);
       await onLog(`[${ts()}] SCAN    : FULL DEEP SCAN / PROFILE ${policy.profile.toUpperCase()}`);
       await onLog(
-        `[${ts()}] POLICY  : ${policy.requestBudget} request budget · ${policy.timeoutMs}ms timeout · concurrency ${policy.maxConcurrency}`,
+        `[${ts()}] POLICY  : ${policy.requestBudget} req budget · ${policy.timeoutMs}ms timeout · concurrency ${policy.maxConcurrency}`,
       );
       await onLog(
         `[${ts()}] TOOLS   : nmap · dig · whois · openssl · fetch · crt.sh · ipinfo.io · Wayback · GitHub · S3/GCS/Azure · psbdmp`,
       );
-      if (authHeaders && Object.keys(authHeaders).length > 0) {
-        await onLog(
-          `[${ts()}] AUTH    : Authenticated scanning enabled (${Object.keys(authHeaders).join(', ')})`,
-        );
-      } else {
-        await onLog(`[${ts()}] AUTH    : Unauthenticated scan`);
-      }
+      await onLog(
+        authHeaders && Object.keys(authHeaders).length > 0
+          ? `[${ts()}] AUTH    : Authenticated scanning enabled (${Object.keys(authHeaders).join(', ')})`
+          : `[${ts()}] AUTH    : Unauthenticated scan`,
+      );
+      await onLog(`[${ts()}] PIPELINE: 5-round parallel pipeline`);
       await onLog(`[${ts()}] ═══════════════════════════════════════`);
 
-      // Phase 1: WAF detection and bypass
-      await onLog(`[${ts()}] [Phase 1] WAF/CDN detection and bypass testing...`);
+      // ════════════════════════════════════════════════════════════════════════
+      // ROUND 1 — WAF / CDN detection
+      //   Must complete before any active probe so the WAF context flag is set.
+      // ════════════════════════════════════════════════════════════════════════
+      await onLog(`[${ts()}] [Round 1] WAF/CDN detection and bypass testing...`);
+      const r1Start = Date.now();
       const { findings: wafFindings } = await runActiveChecks(
         () => checkWafAndBypass(target, onLog),
         { findings: [], wafName: null },
       );
       add(wafFindings);
+      await onLog(`[${ts()}] [Round 1] Complete (${Date.now() - r1Start}ms)`);
 
-      // Phase 2: DNS enumeration
-      await onLog(`[${ts()}] [Phase 2] DNS enumeration (dig)...`);
-      add(await safePhase('Phase 2 (DNS)', () => checkDns(target.hostname, onLog), []));
+      // ════════════════════════════════════════════════════════════════════════
+      // ROUND 2 — Passive recon + OSINT (all in parallel)
+      //   None of these depend on each other. Subdomains are chained internally
+      //   (discovery → takeover → permutations) but the chain runs as one task.
+      // ════════════════════════════════════════════════════════════════════════
+      await onLog(`[${ts()}] [Round 2] Launching parallel recon + OSINT (13 tasks)...`);
+      await onLog(`[${ts()}] [Phase 2]  DNS enumeration`);
+      await onLog(`[${ts()}] [Phase 3]  IP geolocation & ASN intelligence`);
+      await onLog(`[${ts()}] [Phase 3b] IP range & reverse DNS`);
+      if (assetType !== 'ip') await onLog(`[${ts()}] [Phase 4]  WHOIS domain intelligence`);
+      if (assetType !== 'ip') await onLog(`[${ts()}] [Phase 5]  Subdomain discovery + takeover + permutations`);
+      await onLog(`[${ts()}] [Phase 6]  Full port scan (nmap)`);
+      if (target.isHttps) await onLog(`[${ts()}] [Phase 7]  TLS/SSL analysis`);
+      await onLog(`[${ts()}] [Phase 8]  HTTP security headers`);
+      await onLog(`[${ts()}] [Phase 9]  Technology fingerprinting + favicon hash`);
+      await onLog(`[${ts()}] [Phase 11] Wayback Machine`);
+      await onLog(`[${ts()}] [Phase 11c] Google dorking`);
+      await onLog(`[${ts()}] [Phase 11d] GitHub dorking`);
+      await onLog(`[${ts()}] [Phase 11e] Cloud bucket enumeration`);
+      await onLog(`[${ts()}] [Phase 11f] Email harvesting & SPF/DMARC`);
+      await onLog(`[${ts()}] [Phase 11g] Leak detection`);
 
-      // Phase 3: IP geolocation & ASN
-      await onLog(`[${ts()}] [Phase 3] IP geolocation & ASN intelligence...`);
-      await safePhase('Phase 3 (IP info)', () => getIpInfo(target.hostname, onLog), undefined as void);
+      const r2Start = Date.now();
+      const [
+        r2Dns,
+        r2IpInfo,
+        r2IpRange,
+        r2Whois,
+        r2Subs,
+        r2Ports,
+        r2Tls,
+        r2Headers,
+        r2Fingerprint,
+        r2Favicon,
+        r2Wayback,
+        r2GoogleDork,
+        r2GithubDork,
+        r2CloudBuckets,
+        r2Emails,
+        r2Leaks,
+      ] = await Promise.allSettled([
+        // Phase 2: DNS
+        safeRun('Phase 2 (DNS)', () => checkDns(target.hostname, onLog), [], onLog),
 
-      // Phase 3b: IP range / ASN / co-hosted hosts (reconFTW)
-      await onLog(`[${ts()}] [Phase 3b] IP range, ASN mapping, and reverse DNS sweep...`);
-      add(await safePhase('Phase 3b (IP range)', () => checkIpRange(target, onLog), []));
+        // Phase 3: IP geolocation
+        safeRun('Phase 3 (IP info)', () => getIpInfo(target.hostname, onLog).then(() => [] as RealFinding[]), [], onLog),
 
-      // Phase 4: WHOIS
-      if (assetType !== 'ip') {
-        await onLog(`[${ts()}] [Phase 4] WHOIS domain intelligence...`);
-        add(await safePhase('Phase 4 (WHOIS)', () => checkWhois(target.hostname, onLog), []));
-      }
+        // Phase 3b: IP range
+        safeRun('Phase 3b (IP range)', () => checkIpRange(target, onLog), [], onLog),
 
-      // Phase 5: Subdomain discovery + takeover
-      let discoveredSubs: string[] = [];
-      if (assetType !== 'ip') {
-        await onLog(`[${ts()}] [Phase 5] Subdomain discovery...`);
-        const subResult = await safePhase(
-          'Phase 5 (Subdomain discovery)',
-          () => discoverSubdomains(target.hostname, onLog),
-          { findings: [] as RealFinding[], subs: [] as string[] },
-        );
-        add(subResult.findings);
-        discoveredSubs = subResult.subs;
-        await onLog(`[${ts()}] Total subdomains in scope: ${discoveredSubs.length}`);
-        await onLog(`[${ts()}] [Phase 5b] Subdomain takeover detection...`);
-        add(await runActiveChecks(() => checkSubdomainTakeover(discoveredSubs, onLog), []));
+        // Phase 4: WHOIS (skipped for raw IPs)
+        assetType !== 'ip'
+          ? safeRun('Phase 4 (WHOIS)', () => checkWhois(target.hostname, onLog), [], onLog)
+          : Promise.resolve([] as RealFinding[]),
 
-        // Phase 5c: Subdomain permutations (reconFTW)
-        await onLog(`[${ts()}] [Phase 5c] Subdomain permutation sweep...`);
-        const permResult = await safePhase(
-          'Phase 5c (Subdomain permutations)',
-          () => checkSubdomainPermutations(target.hostname, discoveredSubs, onLog),
-          { subs: [] as string[], findings: [] as RealFinding[] },
-        );
-        add(permResult.findings);
-        if (permResult.subs.length > 0) {
-          discoveredSubs.push(...permResult.subs);
-          await onLog(`[${ts()}] Permutation added ${permResult.subs.length} new subdomain(s). Total: ${discoveredSubs.length}`);
-        }
-      }
+        // Phase 5: Subdomains → takeover → permutations (chained, single task)
+        assetType !== 'ip'
+          ? safeRun(
+              'Phase 5 (Subdomains)',
+              async () => {
+                const subResult = await discoverSubdomains(target.hostname, onLog);
+                let discoveredSubs = subResult.subs;
+                const findings: RealFinding[] = [...subResult.findings];
 
-      // Phase 6: Port scanning
-      await onLog(`[${ts()}] [Phase 6] Full port scanning with nmap...`);
-      add(await runActiveChecks(() => checkPorts(target.hostname, 'full', onLog), []));
+                await onLog(`[${ts()}] [Phase 5b] Subdomain takeover detection (${discoveredSubs.length} subs)...`);
+                findings.push(...(await runActiveChecks(() => checkSubdomainTakeover(discoveredSubs, onLog), [])));
 
-      // Phase 7: TLS/SSL analysis
-      if (target.isHttps) {
-        await onLog(`[${ts()}] [Phase 7] TLS/SSL analysis...`);
-        add(await safePhase('Phase 7 (TLS)', () => checkTls(target.hostname, target.port, onLog), []));
-      }
+                await onLog(`[${ts()}] [Phase 5c] Subdomain permutation sweep...`);
+                const permResult = await safeRun(
+                  'Phase 5c (Subdomain permutations)',
+                  () => checkSubdomainPermutations(target.hostname, discoveredSubs, onLog),
+                  { subs: [] as string[], findings: [] as RealFinding[] },
+                  onLog,
+                );
+                findings.push(...permResult.findings);
+                if (permResult.subs.length > 0) {
+                  discoveredSubs = [...discoveredSubs, ...permResult.subs];
+                  await onLog(`[${ts()}] Permutation sweep added ${permResult.subs.length} new subdomain(s). Total: ${discoveredSubs.length}`);
+                }
+                return { findings, subs: discoveredSubs };
+              },
+              { findings: [] as RealFinding[], subs: [] as string[] },
+              onLog,
+            )
+          : Promise.resolve({ findings: [] as RealFinding[], subs: [] as string[] }),
 
-      // Phase 8: HTTP security headers
-      await onLog(`[${ts()}] [Phase 8] HTTP security header analysis...`);
-      add(await safePhase('Phase 8 (Headers)', () => checkHeaders(target, onLog), []));
+        // Phase 6: Ports
+        activeRun('Phase 6 (Ports)', () => checkPorts(target.hostname, 'full', onLog), [], onLog),
 
-      // Phase 9: Technology fingerprinting
-      await onLog(`[${ts()}] [Phase 9] Technology fingerprinting...`);
-      const { techs, findings: fpFindings } = await safePhase(
-        'Phase 9 (Fingerprint)',
-        () => fingerprint(target, onLog),
-        { techs: [] as TechProfile[], findings: [] as RealFinding[] },
-      );
-      add(fpFindings);
-      if (techs.length > 0)
-        await onLog(
-          `[${ts()}] Stack detected: ${techs.map((t) => `${t.name} (${t.category})`).join(' · ')}`,
-        );
+        // Phase 7: TLS
+        target.isHttps
+          ? safeRun('Phase 7 (TLS)', () => checkTls(target.hostname, target.port, onLog), [], onLog)
+          : Promise.resolve([] as RealFinding[]),
 
-      // Phase 9b: Favicon hash fingerprinting (reconFTW / Shodan-style)
-      await onLog(`[${ts()}] [Phase 9b] Favicon hash fingerprinting (Shodan MurmurHash3)...`);
-      add(await safePhase('Phase 9b (Favicon hash)', () => checkFaviconHash(target, onLog), []));
+        // Phase 8: HTTP headers
+        safeRun('Phase 8 (Headers)', () => checkHeaders(target, onLog), [], onLog),
 
-      // Phase 10: Sensitive path discovery
-      await onLog(`[${ts()}] [Phase 10] Sensitive path discovery...`);
-      add(await runActiveChecks(() => checkSensitivePaths(target, true, onLog), []));
-
-      // Phase 11: Wayback Machine
-      await onLog(`[${ts()}] [Phase 11] Wayback Machine...`);
-      add(await safePhase('Phase 11 (Wayback)', () => checkWayback(target.hostname, onLog), []));
-
-      // Phase 11c: Google dorking — generate dork queries + active path probing (reconFTW)
-      await onLog(`[${ts()}] [Phase 11c] Google dorking & sensitive file probing...`);
-      add(await safePhase('Phase 11c (Google dorking)', () => checkGoogleDorking(target, onLog), []));
-
-      // Phase 11d: GitHub dorking — search public repos/code for secrets (reconFTW)
-      await onLog(`[${ts()}] [Phase 11d] GitHub dorking — searching public repos/code...`);
-      add(await safePhase('Phase 11d (GitHub dorking)', () => checkGitHubDorking(target, onLog), []));
-
-      // Phase 11e: Cloud bucket enumeration — S3/GCS/Azure (reconFTW)
-      await onLog(`[${ts()}] [Phase 11e] Cloud bucket enumeration (S3 · GCS · Azure)...`);
-      add(await safePhase('Phase 11e (Cloud buckets)', () => checkCloudBuckets(target, onLog), []));
-
-      // Phase 11f: Email harvesting + SPF/DMARC analysis (reconFTW)
-      await onLog(`[${ts()}] [Phase 11f] Email harvesting & SPF/DMARC analysis...`);
-      add(await safePhase('Phase 11f (Email harvesting)', () => harvestEmails(target, onLog), []));
-
-      // Phase 11g: Paste site / leak detection (reconFTW)
-      await onLog(`[${ts()}] [Phase 11g] Leak detection — paste sites & public dumps...`);
-      add(await safePhase('Phase 11g (Leak detection)', () => checkLeakDetection(target, onLog), []));
-
-      // Phase 11b: Crawl and inventory the real attack surface before
-      // parameter-based testing. This avoids treating the home page as the
-      // entire application.
-      await onLog(`[${ts()}] [Phase 11b] Crawling same-origin attack surface...`);
-      const surface = await safePhase(
-        'Phase 11b (Attack-surface discovery)',
-        () => discoverAttackSurface(target, policy, onLog),
-        { endpoints: [], parameters: [], crawled: [], forms: 0, truncated: false },
-      );
-
-      // Phase 12: Web app probes
-      await onLog(`[${ts()}] [Phase 12] Web app probes...`);
-      add(await runActiveChecks(() => checkWebApp(target, onLog), []));
-
-      // Phase 13: API surface
-      await onLog(`[${ts()}] [Phase 13] API surface discovery...`);
-      add(await runActiveChecks(() => checkApiSurface(target, onLog), []));
-
-      // Phase 13e: use the discovered routes, forms, and parameters for
-      // baseline-aware SQLi, XSS, redirect, and traversal verification.
-      await onLog(`[${ts()}] [Phase 13e] Deep discovered-input testing...`);
-      add(
-        await runActiveChecks(
-          () => runDeepInputTesting(target, policy, surface, onLog),
-          [],
+        // Phase 9: Fingerprint
+        safeRun(
+          'Phase 9 (Fingerprint)',
+          () => fingerprint(target, onLog),
+          { techs: [] as TechProfile[], findings: [] as RealFinding[] },
+          onLog,
         ),
+
+        // Phase 9b: Favicon hash
+        safeRun('Phase 9b (Favicon)', () => checkFaviconHash(target, onLog), [], onLog),
+
+        // Phase 11: Wayback
+        safeRun('Phase 11 (Wayback)', () => checkWayback(target.hostname, onLog), [], onLog),
+
+        // Phase 11c: Google dorking
+        safeRun('Phase 11c (Google dorking)', () => checkGoogleDorking(target, onLog), [], onLog),
+
+        // Phase 11d: GitHub dorking
+        safeRun('Phase 11d (GitHub dorking)', () => checkGitHubDorking(target, onLog), [], onLog),
+
+        // Phase 11e: Cloud buckets
+        safeRun('Phase 11e (Cloud buckets)', () => checkCloudBuckets(target, onLog), [], onLog),
+
+        // Phase 11f: Email harvesting
+        safeRun('Phase 11f (Email harvesting)', () => harvestEmails(target, onLog), [], onLog),
+
+        // Phase 11g: Leak detection
+        safeRun('Phase 11g (Leak detection)', () => checkLeakDetection(target, onLog), [], onLog),
+      ]);
+
+      // Collect Round 2 results
+      add(settled(r2Dns, []));
+      add(settled(r2IpInfo, []));
+      add(settled(r2IpRange, []));
+      add(settled(r2Whois, []));
+      const subsResult = settled(r2Subs, { findings: [] as RealFinding[], subs: [] as string[] });
+      add(subsResult.findings);
+      add(settled(r2Ports, []));
+      add(settled(r2Tls, []));
+      add(settled(r2Headers, []));
+      const fpResult = settled(r2Fingerprint, { techs: [] as TechProfile[], findings: [] as RealFinding[] });
+      add(fpResult.findings);
+      if (fpResult.techs.length > 0)
+        await onLog(`[${ts()}] Stack detected: ${fpResult.techs.map((t) => `${t.name} (${t.category})`).join(' · ')}`);
+      add(settled(r2Favicon, []));
+      add(settled(r2Wayback, []));
+      add(settled(r2GoogleDork, []));
+      add(settled(r2GithubDork, []));
+      add(settled(r2CloudBuckets, []));
+      add(settled(r2Emails, []));
+      add(settled(r2Leaks, []));
+
+      await onLog(`[${ts()}] [Round 2] Complete (${Date.now() - r2Start}ms) — ${subsResult.subs.length} subdomains in scope`);
+
+      // ════════════════════════════════════════════════════════════════════════
+      // ROUND 3 — Active web probes + attack surface crawl (all in parallel)
+      //   attack surface discovery (`surface`) must complete here because
+      //   deep-input testing (Round 4) depends on it.
+      // ════════════════════════════════════════════════════════════════════════
+      await onLog(`[${ts()}] [Round 3] Launching parallel active probes + surface crawl (9 tasks)...`);
+      await onLog(`[${ts()}] [Phase 10]  Sensitive path discovery`);
+      await onLog(`[${ts()}] [Phase 11b] Crawling same-origin attack surface`);
+      await onLog(`[${ts()}] [Phase 12]  Web app probes`);
+      await onLog(`[${ts()}] [Phase 13]  API surface discovery`);
+      await onLog(`[${ts()}] [Phase 14]  Host header injection`);
+      await onLog(`[${ts()}] [Phase 15]  CRLF injection`);
+      await onLog(`[${ts()}] [Phase 16]  Path traversal`);
+      await onLog(`[${ts()}] [Phase 21]  Rate limiting / brute-force protection`);
+      await onLog(`[${ts()}] [Phase 27]  Open redirect detection`);
+
+      const r3Start = Date.now();
+      const [
+        r3SensitivePaths,
+        r3Surface,
+        r3WebApp,
+        r3ApiSurface,
+        r3HostHeader,
+        r3Crlf,
+        r3PathTraversal,
+        r3RateLimiting,
+        r3OpenRedirect,
+      ] = await Promise.allSettled([
+        // Phase 10: Sensitive paths
+        activeRun('Phase 10 (Sensitive paths)', () => checkSensitivePaths(target, true, onLog), [], onLog),
+
+        // Phase 11b: Attack surface crawl
+        safeRun(
+          'Phase 11b (Attack surface)',
+          () => discoverAttackSurface(target, policy, onLog),
+          { endpoints: [], parameters: [], crawled: [], forms: 0, truncated: false },
+          onLog,
+        ),
+
+        // Phase 12: Web app probes
+        activeRun('Phase 12 (Web app)', () => checkWebApp(target, onLog), [], onLog),
+
+        // Phase 13: API surface
+        activeRun('Phase 13 (API surface)', () => checkApiSurface(target, onLog), [], onLog),
+
+        // Phase 14: Host header injection
+        activeRun('Phase 14 (Host header)', () => checkHostHeaderInjection(target, onLog), [], onLog),
+
+        // Phase 15: CRLF injection
+        activeRun('Phase 15 (CRLF)', () => checkCrlfInjection(target, onLog), [], onLog),
+
+        // Phase 16: Path traversal
+        activeRun('Phase 16 (Path traversal)', () => checkPathTraversal(target, onLog), [], onLog),
+
+        // Phase 21: Rate limiting
+        activeRun('Phase 21 (Rate limiting)', () => checkRateLimiting(target, onLog), [], onLog),
+
+        // Phase 27: Open redirect
+        activeRun('Phase 27 (Open redirect)', () => checkOpenRedirect(target, onLog), [], onLog),
+      ]);
+
+      const surface = settled(r3Surface, { endpoints: [], parameters: [], crawled: [], forms: 0, truncated: false });
+      add(settled(r3SensitivePaths, []));
+      add(settled(r3WebApp, []));
+      add(settled(r3ApiSurface, []));
+      add(settled(r3HostHeader, []));
+      add(settled(r3Crlf, []));
+      add(settled(r3PathTraversal, []));
+      add(settled(r3RateLimiting, []));
+      add(settled(r3OpenRedirect, []));
+
+      await onLog(
+        `[${ts()}] [Round 3] Complete (${Date.now() - r3Start}ms) — ${surface.endpoints.length} endpoints · ${surface.forms} forms crawled`,
       );
 
-      // Phase 13f: Parameter discovery (Arjun-style, reconFTW)
-      await onLog(`[${ts()}] [Phase 13f] Parameter discovery (hidden/undocumented params)...`);
-      add(
-        await runActiveChecks(
+      // ════════════════════════════════════════════════════════════════════════
+      // ROUND 4 — Deep attack phases (all in parallel)
+      //   Phases that depend on surface (R3) or techs (R2) use the collected
+      //   values.  The 6 advanced probes also run in parallel within this round.
+      // ════════════════════════════════════════════════════════════════════════
+      await onLog(`[${ts()}] [Round 4] Launching parallel deep-attack phases (11 tasks)...`);
+      await onLog(`[${ts()}] [Phase 13b] API credential leak checks`);
+      await onLog(`[${ts()}] [Phase 13c] Configuration exposure`);
+      await onLog(`[${ts()}] [Phase 13d] XSS verification`);
+      await onLog(`[${ts()}] [Phase 13e] Deep discovered-input testing`);
+      await onLog(`[${ts()}] [Phase 13f] Parameter discovery`);
+      await onLog(`[${ts()}] [Phase 17]  JWT algorithm & secret weakness`);
+      await onLog(`[${ts()}] [Phase 18]  IDOR / BOLA`);
+      await onLog(`[${ts()}] [Phase 19]  HTTP request smuggling`);
+      await onLog(`[${ts()}] [Phase 20]  Log4Shell / Spring4Shell surface`);
+      await onLog(`[${ts()}] [Phase 22]  Advanced probes — SSTI · XXE · SSRF · Deser · CMDi · NoSQL (parallel)`);
+      await onLog(`[${ts()}] [Phase 23]  CVE database lookup`);
+
+      const r4Start = Date.now();
+
+      // Load advanced + CVE modules once (shared across parallel tasks)
+      let advancedModule: Awaited<typeof import('./phases/advanced')> | null = null;
+      let cveModule: Awaited<typeof import('./phases/advanced/cve-lookup')> | null = null;
+      try {
+        [advancedModule, cveModule] = await Promise.all([
+          import('./phases/advanced'),
+          import('./phases/advanced/cve-lookup'),
+        ]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await onLog(`[${ts()}] [WARNING] Advanced module load failed: ${msg}`);
+      }
+
+      const [
+        r4ApiLeaks,
+        r4ConfigExposure,
+        r4Xss,
+        r4DeepInput,
+        r4ParamDiscovery,
+        r4Jwt,
+        r4Idor,
+        r4Smuggling,
+        r4Log4Shell,
+        r4Advanced,
+        r4Cve,
+      ] = await Promise.allSettled([
+        // Phase 13b: API leaks
+        safeRun('Phase 13b (API leaks)', async () => {
+          const { runApiLeaksPhase } = await import('./phases/api-leaks');
+          const found: RealFinding[] = [];
+          await runApiLeaksPhase({ target, policy, log: onLog, addFindings: (f) => found.push(...f) });
+          return found;
+        }, [] as RealFinding[], onLog),
+
+        // Phase 13c: Config exposure
+        safeRun('Phase 13c (Config exposure)', async () => {
+          const { runConfigExposurePhase } = await import('./phases/config-exposure');
+          const found: RealFinding[] = [];
+          await runConfigExposurePhase({ target, policy, log: onLog, addFindings: (f) => found.push(...f) });
+          return found;
+        }, [] as RealFinding[], onLog),
+
+        // Phase 13d: XSS
+        activeRun('Phase 13d (XSS)', async () => {
+          const { runXssPhase } = await import('./phases/xss');
+          const found: RealFinding[] = [];
+          await runXssPhase({ target, policy, log: onLog, addFindings: (f) => found.push(...f) });
+          return found;
+        }, [] as RealFinding[], onLog),
+
+        // Phase 13e: Deep input testing (needs surface)
+        activeRun('Phase 13e (Deep input)', () => runDeepInputTesting(target, policy, surface, onLog), [] as RealFinding[], onLog),
+
+        // Phase 13f: Parameter discovery (needs surface endpoints)
+        activeRun(
+          'Phase 13f (Parameter discovery)',
           () => discoverParameters(target, surface.endpoints.map((e) => e.url), onLog),
-          [],
+          [] as RealFinding[],
+          onLog,
         ),
-      );
 
-      // Phase 13b: API credential leak checks
-      await onLog(`[${ts()}] [Phase 13b] API credential leak checks...`);
-      await safePhase('Phase 13b (API leaks)', async () => {
-        const { runApiLeaksPhase } = await import('./phases/api-leaks');
-        const phaseFindings: RealFinding[] = [];
-        await runApiLeaksPhase({ target, policy, log: onLog, addFindings: (f) => phaseFindings.push(...f) });
-        add(phaseFindings);
-      }, undefined as void);
+        // Phase 17: JWT
+        activeRun('Phase 17 (JWT)', () => checkJwtWeaknesses(target, onLog), [] as RealFinding[], onLog),
 
-      // Phase 13c: Configuration exposure checks
-      await onLog(`[${ts()}] [Phase 13c] Configuration exposure checks...`);
-      await safePhase('Phase 13c (Configuration exposure)', async () => {
-        const { runConfigExposurePhase } = await import('./phases/config-exposure');
-        const phaseFindings: RealFinding[] = [];
-        await runConfigExposurePhase({ target, policy, log: onLog, addFindings: (f) => phaseFindings.push(...f) });
-        add(phaseFindings);
-      }, undefined as void);
+        // Phase 18: IDOR / BOLA
+        activeRun('Phase 18 (IDOR)', () => checkIdorAndBola(target, onLog), [] as RealFinding[], onLog),
 
-      // Phase 13d: Focused XSS verification
-      await onLog(`[${ts()}] [Phase 13d] Focused XSS verification...`);
-      add(await runActiveChecks(async () => {
-        const { runXssPhase } = await import('./phases/xss');
-        const phaseFindings: RealFinding[] = [];
-        await runXssPhase({ target, policy, log: onLog, addFindings: (f) => phaseFindings.push(...f) });
-        return phaseFindings;
-      }, []));
+        // Phase 19: HTTP smuggling
+        activeRun('Phase 19 (Smuggling)', () => checkHttpRequestSmuggling(target, onLog), [] as RealFinding[], onLog),
 
-      // Phase 14: Host header injection
-      await onLog(`[${ts()}] [Phase 14] Host header injection...`);
-      add(await runActiveChecks(() => checkHostHeaderInjection(target, onLog), []));
+        // Phase 20: Log4Shell
+        activeRun('Phase 20 (Log4Shell)', () => checkLog4ShellSurface(target, onLog), [] as RealFinding[], onLog),
 
-      // Phase 15: CRLF injection
-      await onLog(`[${ts()}] [Phase 15] CRLF injection...`);
-      add(await runActiveChecks(() => checkCrlfInjection(target, onLog), []));
+        // Phase 22: Advanced probes — all 6 in parallel
+        advancedModule
+          ? activeRun('Phase 22 (Advanced)', async () => {
+              const {
+                checkSSTI,
+                checkXXE,
+                checkSSRF,
+                checkDeserialization,
+                checkCommandInjection,
+                checkNoSqlInjection,
+              } = advancedModule!;
+              const results = await Promise.allSettled([
+                checkSSTI ? checkSSTI(target, onLog) : Promise.resolve([] as RealFinding[]),
+                checkXXE ? checkXXE(target, onLog) : Promise.resolve([] as RealFinding[]),
+                checkSSRF ? checkSSRF(target, onLog) : Promise.resolve([] as RealFinding[]),
+                checkDeserialization ? checkDeserialization(target, onLog) : Promise.resolve([] as RealFinding[]),
+                checkCommandInjection ? checkCommandInjection(target, onLog) : Promise.resolve([] as RealFinding[]),
+                checkNoSqlInjection ? checkNoSqlInjection(target, onLog) : Promise.resolve([] as RealFinding[]),
+              ]);
+              return results.flatMap((r) => settled(r, [] as RealFinding[]));
+            }, [] as RealFinding[], onLog)
+          : Promise.resolve([] as RealFinding[]),
 
-      // Phase 16: Path traversal
-      await onLog(`[${ts()}] [Phase 16] Path traversal...`);
-      add(await runActiveChecks(() => checkPathTraversal(target, onLog), []));
+        // Phase 23: CVE lookup (needs techs from Round 2)
+        cveModule && fpResult.techs.length > 0
+          ? safeRun('Phase 23 (CVE)', () => cveModule!.lookupCvesForTechs(fpResult.techs, onLog), [] as RealFinding[], onLog)
+          : (async () => {
+              if (!cveModule) await onLog(`[${ts()}] [Phase 23] Skipped — advanced module not loaded`);
+              else await onLog(`[${ts()}] [Phase 23] Skipped — no technologies detected`);
+              return [] as RealFinding[];
+            })(),
+      ]);
 
-      // Phase 17: JWT weaknesses
-      await onLog(
-        `[${ts()}] [Phase 17] JWT algorithm, secret weakness, and advanced attack suite...`,
-      );
-      add(await runActiveChecks(() => checkJwtWeaknesses(target, onLog), []));
+      add(settled(r4ApiLeaks, []));
+      add(settled(r4ConfigExposure, []));
+      add(settled(r4Xss, []));
+      add(settled(r4DeepInput, []));
+      add(settled(r4ParamDiscovery, []));
+      add(settled(r4Jwt, []));
+      add(settled(r4Idor, []));
+      add(settled(r4Smuggling, []));
+      add(settled(r4Log4Shell, []));
+      add(settled(r4Advanced, []));
+      add(settled(r4Cve, []));
 
-      // Phase 18: IDOR / BOLA
-      await onLog(`[${ts()}] [Phase 18] IDOR / Broken Object-Level Access Control...`);
-      add(await runActiveChecks(() => checkIdorAndBola(target, onLog), []));
+      await onLog(`[${ts()}] [Round 4] Complete (${Date.now() - r4Start}ms)`);
 
-      // Phase 19: HTTP request smuggling
-      await onLog(`[${ts()}] [Phase 19] HTTP request smuggling...`);
-      add(await runActiveChecks(() => checkHttpRequestSmuggling(target, onLog), []));
-
-      // Phase 20: Log4Shell / Spring4Shell surface
-      await onLog(`[${ts()}] [Phase 20] Log4Shell/Spring4Shell surface...`);
-      add(await runActiveChecks(() => checkLog4ShellSurface(target, onLog), []));
-
-      // Phase 21: Rate limiting absence
-      await onLog(`[${ts()}] [Phase 21] Rate limiting / brute-force protection check...`);
-      add(await runActiveChecks(() => checkRateLimiting(target, onLog), []));
-
-      // Phase 27: Open redirect (reconFTW)
-      await onLog(`[${ts()}] [Phase 27] Open redirect detection...`);
-      add(await runActiveChecks(() => checkOpenRedirect(target, onLog), []));
-
-      // Phase 22: Advanced probes (SSTI, XXE, SSRF, Deserialization, CMDi, NoSQL)
-      await onLog(
-        `[${ts()}] [Phase 22] Advanced probes — SSTI · XXE · SSRF · Deserialization · CMDi · NoSQL...`,
-      );
-      let lookupCvesForTechs: ((t: TechProfile[], l: LogFn) => Promise<RealFinding[]>) | undefined;
-      await safePhase('Phase 22 (Advanced probes / module load)', async () => {
-        const {
-          checkSSTI,
-          checkXXE,
-          checkSSRF,
-          checkDeserialization,
-          checkCommandInjection,
-          checkNoSqlInjection,
-        } = await import('./phases/advanced');
-        const { lookupCvesForTechs: _lookupCves } = await import('./phases/advanced/cve-lookup');
-        lookupCvesForTechs = _lookupCves;
-        add(
-          await runActiveChecks(async () => {
-            const advancedFindings: RealFinding[] = [];
-            if (checkSSTI) advancedFindings.push(...(await checkSSTI(target, onLog)));
-            if (checkXXE) advancedFindings.push(...(await checkXXE(target, onLog)));
-            if (checkSSRF) advancedFindings.push(...(await checkSSRF(target, onLog)));
-            if (checkDeserialization)
-              advancedFindings.push(...(await checkDeserialization(target, onLog)));
-            if (checkCommandInjection)
-              advancedFindings.push(...(await checkCommandInjection(target, onLog)));
-            if (checkNoSqlInjection)
-              advancedFindings.push(...(await checkNoSqlInjection(target, onLog)));
-            return advancedFindings;
-          }, []),
-        );
-      }, undefined as void);
-
-      // Phase 23: CVE database lookup
-      await onLog(`[${ts()}] [Phase 23] CVE database lookup...`);
-      if (lookupCvesForTechs) {
-        add(await safePhase('Phase 23 (CVE lookup)', () => lookupCvesForTechs!(techs, onLog), []));
-      } else {
-        await onLog(`[${ts()}] [Phase 23] Skipped — advanced probe module not loaded`);
-      }
-
-      // ── WEAPONISED PHASES (only when allowVerification is true) ──
+      // ════════════════════════════════════════════════════════════════════════
+      // ROUND 5 — Weaponised verification (parallel, only when allowed)
+      // ════════════════════════════════════════════════════════════════════════
       if (policy.allowVerification) {
-        await onLog(`[${ts()}] [Phase 24] Unsecured registration exploitation...`);
-        add(await safePhase('Phase 24 (Open registration)', () => checkOpenRegistration(target, onLog), []));
+        await onLog(`[${ts()}] [Round 5] Launching verification phases (parallel)...`);
+        await onLog(`[${ts()}] [Phase 24] Unsecured registration exploitation`);
+        await onLog(`[${ts()}] [Phase 25] Default credential brute-force`);
+        await onLog(`[${ts()}] [Phase 26] SQLi authentication bypass`);
+        if (getCapturedSession()) await onLog(`[${ts()}] [Phase 28] IDOR with captured session`);
 
-        await onLog(`[${ts()}] [Phase 25] Default credential brute-force...`);
-        add(await safePhase('Phase 25 (Default credentials)', () => checkDefaultCredentials(target, onLog), []));
+        const r5Start = Date.now();
+        const [r5Reg, r5Creds, r5SqliAuth, r5IdorSession] = await Promise.allSettled([
+          safeRun('Phase 24 (Open registration)', () => checkOpenRegistration(target, onLog), [] as RealFinding[], onLog),
+          safeRun('Phase 25 (Default credentials)', () => checkDefaultCredentials(target, onLog), [] as RealFinding[], onLog),
+          safeRun('Phase 26 (SQLi auth bypass)', () => checkSqliAuthBypass(target, onLog), [] as RealFinding[], onLog),
+          getCapturedSession()
+            ? safeRun('Phase 28 (IDOR session)', () => checkIdorWithCapturedSession(target, onLog), [] as RealFinding[], onLog)
+            : Promise.resolve([] as RealFinding[]),
+        ]);
 
-        await onLog(`[${ts()}] [Phase 26] SQLi authentication bypass...`);
-        add(await safePhase('Phase 26 (SQLi auth bypass)', () => checkSqliAuthBypass(target, onLog), []));
-
-        if (getCapturedSession()) {
-          await onLog(`[${ts()}] [Phase 28] IDOR with captured session...`);
-          add(await safePhase('Phase 28 (IDOR session)', () => checkIdorWithCapturedSession(target, onLog), []));
-        }
+        add(settled(r5Reg, []));
+        add(settled(r5Creds, []));
+        add(settled(r5SqliAuth, []));
+        add(settled(r5IdorSession, []));
+        await onLog(`[${ts()}] [Round 5] Complete (${Date.now() - r5Start}ms)`);
       }
 
+      // ── Post-processing ───────────────────────────────────────────────────
       suppressWafSensitiveFindings(all);
       downgradeWafChallengeFindings(all);
       applyComplianceMapping(all);
 
-      // ── Summary ──
+      // ── Executive summary ─────────────────────────────────────────────────
       const reportable = all.filter((f) => f.cvss > 0 || f.severity !== 'low');
       const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 };
       for (const f of reportable) {

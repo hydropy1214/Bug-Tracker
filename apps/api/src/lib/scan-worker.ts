@@ -20,14 +20,15 @@ import { decryptAuthHeaders } from "./encryption";
 import { logger } from "./logger";
 
 const TICK_MS = 2_000; // keep the queue responsive without busy-polling the database
-const SCANNER_PHASE_IDS = [
-  "1", "2", "3", "4", "5", "5b", "6", "7", "8", "9", "10", "11", "11b",
-  "12", "13", "13b", "13c", "13d", "13e", "14", "15", "16", "17", "18",
-  "19", "20", "21", "22", "23", "24", "25", "26", "28",
-] as const;
-type ScannerPhaseId = (typeof SCANNER_PHASE_IDS)[number];
-const SCANNER_PHASE_COUNT = SCANNER_PHASE_IDS.length;
-const SCANNER_PHASE_INDEX = new Map(SCANNER_PHASE_IDS.map((id, index) => [id, index + 1]));
+
+// 5-round parallel pipeline — progress milestones per round
+const ROUND_PROGRESS: Record<string, number> = {
+  "1": 5,   // WAF detection
+  "2": 40,  // Recon + OSINT (biggest parallel batch — ports/subdomains/OSINT)
+  "3": 65,  // Active web probes + surface crawl
+  "4": 90,  // Deep attack phases
+  "5": 95,  // Verification
+};
 
 class ScanCanceledError extends Error {
   constructor() {
@@ -209,29 +210,33 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
       async (msg) => {
         await throwIfCanceled(scan.id);
         await log(msg);
-        // Scanner logs carry the authoritative phase number. Use it for
-        // progress so long-running phases (notably nmap) do not look frozen.
-        const phaseMatch = msg.match(/\[Phase\s+(\d+)([a-z])?\]/i);
-        if (phaseMatch) {
-          const phaseId = `${phaseMatch[1]}${phaseMatch[2] ?? ""}`.toLowerCase();
-          const scannerPhase =
-            SCANNER_PHASE_INDEX.get(phaseId as ScannerPhaseId) ??
-            Number.parseInt(phaseMatch[1]!, 10);
-          if (Number.isFinite(scannerPhase)) {
-            currentPhase = Math.max(currentPhase, Math.min(scannerPhase, SCANNER_PHASE_COUNT));
-            await setProgress(
-              scan.id,
-              Math.max(1, Math.min(94, Math.round((currentPhase / SCANNER_PHASE_COUNT) * 95))),
-            );
+        // Round-completion markers drive progress (e.g. "[Round 2] Complete")
+        const roundCompleteMatch = msg.match(/\[Round\s+(\d+)\]\s+Complete/i);
+        if (roundCompleteMatch) {
+          const milestone = ROUND_PROGRESS[roundCompleteMatch[1]!] ?? 0;
+          if (milestone > 0) {
+            currentPhase = Math.max(currentPhase, milestone);
+            await setProgress(scan.id, currentPhase);
             return;
           }
         }
-
-        // Keep a small amount of movement inside the current phase without
-        // regressing when multiple log lines arrive out of order.
+        // Round-launch markers give early progress feedback
+        const roundLaunchMatch = msg.match(/\[Round\s+(\d+)\]\s+Launching/i);
+        if (roundLaunchMatch) {
+          const roundNum = Number(roundLaunchMatch[1]!);
+          const prevMilestone = ROUND_PROGRESS[String(roundNum - 1)] ?? 0;
+          const thisMilestone = ROUND_PROGRESS[String(roundNum)] ?? prevMilestone;
+          const mid = Math.round((prevMilestone + thisMilestone) / 2);
+          if (mid > currentPhase) {
+            currentPhase = mid;
+            await setProgress(scan.id, currentPhase);
+          }
+          return;
+        }
+        // Fallback: nudge progress slightly inside a round without regressing
         const phaseIdx = Math.min(currentPhase, totalPhases - 2);
         const subProgress = Math.round(((phaseIdx + 0.5) / totalPhases) * 95);
-        await setProgress(scan.id, Math.max(1, subProgress));
+        if (subProgress > currentPhase) await setProgress(scan.id, Math.max(1, subProgress));
       },
       policy,
       authHeaders,
@@ -245,39 +250,44 @@ async function processScan(scan: typeof scansTable.$inferSelect): Promise<void> 
         .where(eq(scansTable.id, scan.id));
     }
 
-    // Insert real findings (deduplicate by title across assets)
-    for (const finding of assetFindings) {
+    // Deduplicate and batch-insert all findings in one round-trip
+    const newFindings = assetFindings.filter((finding) => {
       const dedupeKey = `${finding.title}::${asset.id}`;
-      if (seenTitles.has(dedupeKey)) continue;
+      if (seenTitles.has(dedupeKey)) return false;
       seenTitles.add(dedupeKey);
+      return true;
+    });
 
-      await db.insert(findingsTable).values({
-        projectId: scan.projectId,
-        scanId: scan.id,
-        assetId: asset.id,
-        title: finding.title,
-        description: finding.description,
-        severity: finding.severity,
-        verification: finding.verification ?? "verified",
-        // `verified` is reserved for direct evidence from bounded Phase 24
-        // verification; legacy scanner metadata must not imply canary proof.
-        verified: finding.verified ?? false,
-        confidence: Math.max(0, Math.min(100, Math.round(finding.confidence ?? 80))),
-        evidenceQuality: finding.evidenceQuality ?? "standard",
-        verificationMethod: finding.verificationMethod ?? null,
-        reproducibility: finding.reproducibility ?? "not_tested",
-        affectedEndpoint: finding.affectedEndpoint ?? null,
-        affectedParameter: finding.affectedParameter ?? null,
-        negativeTests: finding.negativeTests ?? null,
-        limitations: finding.limitations ?? null,
-        toolInfo: finding.toolInfo ?? capabilityJson,
-        status: "open",
-        cvss: finding.cvss,
-        cve: finding.cve ?? null,
-        remediation: finding.remediation,
-        evidence: finding.evidence,
-      });
-      totalFindingsAdded++;
+    if (newFindings.length > 0) {
+      await db.insert(findingsTable).values(
+        newFindings.map((finding) => ({
+          projectId: scan.projectId,
+          scanId: scan.id,
+          assetId: asset.id,
+          title: finding.title,
+          description: finding.description,
+          severity: finding.severity,
+          verification: finding.verification ?? "verified",
+          // `verified` is reserved for direct evidence from bounded Phase 24
+          // verification; legacy scanner metadata must not imply canary proof.
+          verified: finding.verified ?? false,
+          confidence: Math.max(0, Math.min(100, Math.round(finding.confidence ?? 80))),
+          evidenceQuality: finding.evidenceQuality ?? "standard",
+          verificationMethod: finding.verificationMethod ?? null,
+          reproducibility: finding.reproducibility ?? "not_tested",
+          affectedEndpoint: finding.affectedEndpoint ?? null,
+          affectedParameter: finding.affectedParameter ?? null,
+          negativeTests: finding.negativeTests ?? null,
+          limitations: finding.limitations ?? null,
+          toolInfo: finding.toolInfo ?? capabilityJson,
+          status: "open",
+          cvss: finding.cvss,
+          cve: finding.cve ?? null,
+          remediation: finding.remediation,
+          evidence: finding.evidence,
+        })),
+      );
+      totalFindingsAdded += newFindings.length;
     }
 
     // Advance progress after each asset
