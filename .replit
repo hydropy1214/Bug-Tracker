@@ -11,10 +11,17 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+# Project workflow — sequential so setup always runs before services.
+# On a fresh GitHub import node_modules is missing; setup.sh installs
+# deps and pushes the DB schema before either server tries to start.
 [[workflows.workflow]]
 name = "Project"
-mode = "parallel"
+mode = "sequential"
 author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/setup.sh"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
